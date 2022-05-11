@@ -34,6 +34,7 @@ class Quantisation(nn.Module):
             -1 / self.num_embeddings, 1 / self.num_embeddings
         )
         self.quantised_vectors = None
+        self.codebook_indices = None
 
     def _preprocess(self, x: Tensor):
         # Rearrange from batch x channel x n dims to batch x n dims x channel
@@ -66,33 +67,34 @@ class Quantisation(nn.Module):
         distances = torch.cdist(x_flat, self.embedding.weight, p=2.0) ** 2
 
         # Encoding - select closest embedding vectors
-        encoding_indices = torch.argmin(distances, dim=1)
+        codebook_indices = torch.argmin(distances, dim=1)
 
         # Quantise
-        quantised_flat = self.embedding(encoding_indices)
+        quantised_flat = self.embedding(codebook_indices)
 
         # Straight through estimator
         quantised_flat = x_flat + (quantised_flat - x_flat).detach()
 
-        return quantised_flat
+        return quantised_flat, codebook_indices
 
     def forward(self, x: Tensor):
         # Reshape and flatten encoder output for quantisation
         x_flat, permuted_shape = self._preprocess(x)
 
         # Quantisation via nearest neighbor lookup
-        quantised_flat = self.quantise(x_flat)
+        quantised_flat, codebook_indices = self.quantise(x_flat)
+        self.quantised_vectors = quantised_flat
+        self.codebook_indices = codebook_indices
 
         # Reshape back to original dims
         quantised = self._postprocess(quantised_flat, permuted_shape)
-        self.quantised_vectors = quantised
 
         return quantised
 
-    def get_quantised_vectors(self):
+    def get_quantised(self):
         # Retrieve the previously quantised vectors without forward passing again
-        if self.quantised_vectors is None:
+        if self.quantised_vectors is None or self.codebook_indices is None:
             raise Exception(
                 "quantisation has not yet been performed, please run a forward pass"
             )
-        return self.quantised_vectors
+        return self.quantised_vectors, self.codebook_indices
