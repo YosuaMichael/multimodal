@@ -43,7 +43,12 @@ class TestQuantisation(unittest.TestCase):
         self.vq.embedding = nn.Embedding.from_pretrained(self.embedding_weights)
 
     def test_quantised_output(self):
+        # Make sure this raises NameError when trying to retrieve quantised tokens
+        # without running forward first
+        with self.assertRaises(NameError):
+            actual_flat, actual_codebook = self.vq.get_quantised()
         actual = self.vq(self.encoded)
+        actual_flat, actual_codebook = self.vq.get_quantised()
         # This is shape (2,5,3)
         expected = torch.Tensor(
             [
@@ -63,8 +68,12 @@ class TestQuantisation(unittest.TestCase):
                 ],
             ]
         )
+        expected_flat = expected.permute(0, 2, 1).contiguous().view(-1, 5)
+        expected_codebook = torch.Tensor([2, 2, 0, 2, 1, 3]).type(torch.LongTensor)
 
         assert_expected(actual, expected)
+        assert_expected(actual_flat, expected_flat)
+        assert_expected(actual_codebook, expected_codebook)
 
     def test_preprocess(self):
         encoded_flat, permuted_shape = self.vq._preprocess(self.encoded)

@@ -94,7 +94,7 @@ class Quantisation(nn.Module):
     def get_quantised(self):
         # Retrieve the previously quantised vectors without forward passing again
         if self.quantised_vectors is None or self.codebook_indices is None:
-            raise Exception(
+            raise NameError(
                 "quantisation has not yet been performed, please run a forward pass"
             )
         return self.quantised_vectors, self.codebook_indices
