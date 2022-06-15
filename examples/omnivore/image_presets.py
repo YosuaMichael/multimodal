@@ -2,6 +2,12 @@ import torch
 from torchvision.transforms import autoaugment, transforms
 from torchvision.transforms.functional import InterpolationMode
 
+class Unsqueeze(torch.nn.Module):
+    def __init__(self, pos=0):
+        super().__init__()
+        self.pos = pos
+    def forward(self, x):
+        return x.unsqueeze(self.pos)
 
 class ImageNetClassificationPresetTrain:
     def __init__(
@@ -33,12 +39,15 @@ class ImageNetClassificationPresetTrain:
                 # ADDING ColorJitter
                 transforms.ColorJitter(brightness=0.4, contrast=0.4, saturation=0.4, hue=0.4),
                 transforms.PILToTensor(),
-                # transforms.ConvertImageDtype(torch.float),
-                # transforms.Normalize(mean=mean, std=std),
+                transforms.ConvertImageDtype(torch.float),
+                transforms.Normalize(mean=mean, std=std),
             ]
         )
         if random_erase_prob > 0:
             trans.append(transforms.RandomErasing(p=random_erase_prob))
+            
+        # For omnivore to make the image look like a video with C D H W layout
+        trans.append(Unsqueeze(pos=1))
 
         self.transforms = transforms.Compose(trans)
 
@@ -64,6 +73,8 @@ class ImageNetClassificationPresetEval:
                 transforms.PILToTensor(),
                 transforms.ConvertImageDtype(torch.float),
                 transforms.Normalize(mean=mean, std=std),
+                # For omnivore to make the image look like a video with C D H W layout
+                Unsqueeze(pos=1),
             ]
         )
 

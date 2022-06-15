@@ -11,6 +11,13 @@ class ColorJitter3d(transforms.ColorJitter):
         assert isinstance(img, torch.Tensor)
         img[:3, :, :] = super().forward(img[:3, :, :])
         return img
+    
+class Unsqueeze(torch.nn.Module):
+    def __init__(self, pos=0):
+        super().__init__()
+        self.pos = pos
+    def forward(self, x):
+        return x.unsqueeze(self.pos)
 
 # From original implementation https://www.internalfb.com/code/fbsource/[f1a98f41bcce7ee621f0248a6e0235a3e3dea628]/fbcode/deeplearning/projects/omnivore/vissl/data/ssl_transforms/depth_transforms.py?lines=13
 class DropChannels(nn.Module):
@@ -171,6 +178,8 @@ class DepthClassificationPresetTrain:
             
         trans.append(transforms.Normalize(mean=mean, std=std))
         trans.append(DropChannels(channel_probs=[0.5, 0.5, 0.5, 0], tie_channels=[0, 1, 2], fill_values=[0, 0, 0, 0]))
+        # For omnivore to make the rgbd look like video with C D H W layout
+        trans.append(Unsqueeze(pos=1))
 
         self.transforms = transforms.Compose(trans)
 
@@ -184,8 +193,8 @@ class DepthClassificationPresetEval:
         *,
         crop_size,
         resize_size=256,
-        mean=(0.485, 0.456, 0.406, 0.0418),
-        std=(0.229, 0.224, 0.225, 0.0295),
+        mean=(0.485, 0.456, 0.406, 0.8049),
+        std=(0.229, 0.224, 0.225, 0.2116),
         interpolation=InterpolationMode.BILINEAR,
     ):
 
@@ -193,9 +202,11 @@ class DepthClassificationPresetEval:
             [
                 transforms.Resize(resize_size, interpolation=interpolation),
                 transforms.CenterCrop(crop_size),
-                transforms.PILToTensor(),
-                transforms.ConvertImageDtype(torch.float),
-                transforms.Normalize(mean=mean, std=std),
+                RGBToFloatAndDepthNorm(max_depth=75, clamp_max_before_scale=True),
+                # transforms.ConvertImageDtype(torch.float),
+                # transforms.Normalize(mean=mean, std=std),
+                # For omnivore to make the depth image look like video with C D H W layout
+                Unsqueeze(pos=1),
             ]
         )
 
