@@ -20,6 +20,8 @@ import video_presets
 import depth_presets
 import utils
 
+def lprint(*x):
+    print(f"[{datetime.datetime.now()}]", *x)
 
 
 # TODO: Put the dataset class on separate file
@@ -181,6 +183,17 @@ class ConcatIterable:
 def get_single_data_loader_from_dataset(train_dataset, val_dataset, args):  
     train_sampler = torch.utils.data.RandomSampler(train_dataset)
     test_sampler = torch.utils.data.SequentialSampler(val_dataset)
+
+    collate_fn = None
+    num_classes = len(train_dataset.classes)
+    mixup_transforms = []
+    if args.mixup_alpha > 0.0:
+        mixup_transforms.append(transforms.RandomMixup(num_classes, p=1.0, alpha=args.mixup_alpha))
+    if args.cutmix_alpha > 0.0:
+        mixup_transforms.append(transforms.RandomCutmix(num_classes, p=1.0, alpha=args.cutmix_alpha))
+    if mixup_transforms:
+        mixupcutmix = torchvision.transforms.RandomChoice(mixup_transforms)
+        collate_fn = lambda batch: mixupcutmix(*default_collate(batch))  # noqa: E731
     
     train_data_loader = torch.utils.data.DataLoader(
         train_dataset,
@@ -188,7 +201,7 @@ def get_single_data_loader_from_dataset(train_dataset, val_dataset, args):
         sampler=train_sampler,
         num_workers=args.workers,
         pin_memory=True,
-        collate_fn=torch.utils.data.dataloader.default_collate,
+        collate_fn=collate_fn,
     )
     val_data_loader = torch.utils.data.DataLoader(
         val_dataset, batch_size=args.batch_size, sampler=test_sampler, num_workers=args.workers, pin_memory=True
@@ -197,14 +210,17 @@ def get_single_data_loader_from_dataset(train_dataset, val_dataset, args):
 
 def get_omnivore_data_loader(args):
     # TODO: Make sure this is not hardcoded
-    imagenet_path = "/Users/yosuamichael/Downloads/datasets/mini_omnivore/mini_imagenet"
-    kinetics_path = "/Users/yosuamichael/Downloads/datasets/mini_omnivore/mini_kinetics"
-    sunrgbd_path = "/Users/yosuamichael/Downloads/datasets/SUN_RGBD"
+    # imagenet_path = "/Users/yosuamichael/Downloads/datasets/mini_omnivore/mini_imagenet"
+    # kinetics_path = "/Users/yosuamichael/Downloads/datasets/mini_omnivore/mini_kinetics"
+    # sunrgbd_path = "/Users/yosuamichael/Downloads/datasets/SUN_RGBD"
+    imagenet_path = "/data/home/yosuamichael/datasets/mini_imagenet"
+    kinetics_path = "/data/home/yosuamichael/datasets/mini_kinetics"
+    sunrgbd_path = "/data/home/yosuamichael/datasets/SUN_RGBD"
     
-    train_crop_size = 224
-    val_crop_size = 224
-    train_resize_size = 256
-    val_resize_size = 256
+    train_crop_size = args.train_crop_size
+    train_resize_size = args.train_resize_size
+    val_crop_size = args.val_crop_size
+    val_resize_size = args.val_resize_size
     # Get imagenet data
     imagenet_train_preset = image_presets.ImageNetClassificationPresetTrain(crop_size=train_crop_size, interpolation=InterpolationMode.BICUBIC,
                             auto_augment_policy="ra", random_erase_prob=0.25, )
@@ -221,7 +237,7 @@ def get_omnivore_data_loader(args):
 
     video_train_dataset = OmnivoreKinetics(
         f"{kinetics_path}", 
-        frames_per_clip=32, frame_rate=16, step_between_clips=8, 
+        frames_per_clip=32, frame_rate=16, step_between_clips=32, 
         split="train", transform= video_train_preset
     )
     video_val_dataset = OmnivoreKinetics(
@@ -244,13 +260,13 @@ def get_omnivore_data_loader(args):
     
     train_data_loader = ConcatIterable(
         [imagenet_train_data_loader, video_train_data_loader, depth_train_data_loader],
-        ['image', 'video', 'depth'],
+        ['image', 'video', 'rgbd'],
         [1, 1, 1]
     )
     
     val_data_loader = ConcatIterable(
         [imagenet_val_data_loader, video_val_data_loader, depth_val_data_loader],
-        ['image', 'video', 'depth'],
+        ['image', 'video', 'rgbd'],
         [1, 1, 1]
     )
 
@@ -269,21 +285,34 @@ def train_one_epoch(model, criterion, optimizer, data_loader, device, epoch, arg
         optimizer.step()
 
         acc1, acc5 = utils.accuracy(output, target, topk=(1, 5))
-        acc1s.append(acc1)
-        acc5s.append(acc5)
-        print(f"Train epoch {epoch}, batch_num {i}, input_type: {input_type}")
-    print(f"[Train #{epoch}] acc1: {np.mean(acc1s)}, acc5: {np.mean(acc5s)}")
+        acc1s.append(acc1.item())
+        acc5s.append(acc5.item())
+        if i % 200 == 0:
+            lprint(f"Train epoch {epoch}, batch_num {i}, input_type: {input_type}")
+            lprint(f"[Train #{epoch}] acc1: {np.mean(acc1s)}, acc5: {np.mean(acc5s)}")
+    lprint(f"[Train #{epoch}] acc1: {np.mean(acc1s)}, acc5: {np.mean(acc5s)}")
 
 def evaluate(model, criterion, val_data_loader, device):
     model.eval()
+    data_loader.init_indices(epoch=0, shuffle=False)
     with torch.inference_mode():
-        for (image, target), input_type in data_loader:
-            image = image.to(device, non_blocking=True)
-            target = target.to(device, non_blocking=True)
-            output = model(image, input_type)
-            loss = criterion(output, target)
-            acc1, acc5 = utils.accuracy(output, target, topk=(1, 5))
-            print(f"[Eval] acc1: {acc1}, acc5: {acc5}")
+        acc1s, acc5s = [], []
+        try:
+            for i, ((image, target), input_type) in enumerate(val_data_loader):
+                image = image.to(device, non_blocking=True)
+                target = target.to(device, non_blocking=True)
+                output = model(image, input_type)
+                loss = criterion(output, target)
+                acc1, acc5 = utils.accuracy(output, target, topk=(1, 5))
+                acc1s.append(acc1.item())
+                acc5s.append(acc5.item())
+                if i % 200 == 0:
+                    lprint(f"[Eval i={i}] acc1: {np.mean(acc1s)}, acc5: {np.mean(acc5s)}")
+
+            lprint(f"[Eval] acc1: {np.mean(acc1s)}, acc5: {np.mean(acc5s)}")
+        except Exception as e:
+            lprint(f"Error on i={i} with input_type={input_type}")
+            raise
 
 
 
@@ -342,7 +371,10 @@ def main(args):
         )
     else:
         lr_scheduler = main_lr_scheduler
-        
+
+    # DELETEME: DEBUGGING eval
+    evaluate(model, criterion, val_data_loader, device=device)
+    
     # Start training
     # TODO: EDIT!
     print("Start training")
@@ -369,9 +401,9 @@ def main(args):
 
 
 
-def get_args_parser():
+def get_args_parser(add_help=True):
     import argparse
-    parser = argparse.ArgumentParser(description="TorchMultimodal Omnivore Classification Training")
+    parser = argparse.ArgumentParser(description="TorchMultimodal Omnivore Classification Training", add_help=add_help)
     
     parser.add_argument("--lr", default=0.1, type=float, help="initial learning rate")
     parser.add_argument("--lr-warmup-epochs", default=0, type=int, help="the number of epochs to warmup (default: 0)")
@@ -400,13 +432,27 @@ def get_args_parser():
         dest="weight_decay",
     )
     parser.add_argument("--epochs", default=90, type=int, metavar="N", help="number of total epochs to run")
-    parser.add_argument("--device", default="cpu", type=str, help="device (Use cuda or cpu Default: cpu)")
+    parser.add_argument("--device", default="cuda", type=str, help="device (Use cuda or cpu Default: cuda)")
     parser.add_argument("--output-dir", default=".", type=str, help="path to save outputs")
     
     parser.add_argument(
         "--label-smoothing", default=0.0, type=float, help="label smoothing (default: 0.0)", dest="label_smoothing"
     )
+    parser.add_argument("--mixup-alpha", default=0.0, type=float, help="mixup alpha (default: 0.0)")
+    parser.add_argument("--cutmix-alpha", default=0.0, type=float, help="cutmix alpha (default: 0.0)")
     parser.add_argument("--opt", default="sgd", type=str, help="optimizer")
+    parser.add_argument(
+        "--train-resize-size", default=256, type=int, help="the resize size used for training (default: 256)"
+    )
+    parser.add_argument(
+        "--train-crop-size", default=224, type=int, help="the random crop size used for training (default: 224)"
+    )
+    parser.add_argument(
+        "--val-resize-size", default=256, type=int, help="the resize size used for validation (default: 256)"
+    )
+    parser.add_argument(
+        "--val-crop-size", default=224, type=int, help="the central crop size used for validation (default: 224)"
+    )
     return parser
 
 if __name__ == "__main__":
