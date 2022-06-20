@@ -2,9 +2,11 @@
 
 # TODO:
 # - [P0] Able to run distributed [DONE]
-# - [P0] Refactor the dataset to separate file (and update sunrgbd class to not using manual json)
-# - [P0] Enable to resume checkpoint and do evaluation only
+# - [P0] Refactor the dataset to separate file (and update sunrgbd class to not using manual json) [DONE?]
+# - [P0] Enable to resume checkpoint and do evaluation only [DONE?]
 # - [P2] Enable using EMA during training
+#
+# NOTE: [DONE?] -> need more testing
 
 import torch
 import torch.nn as nn
@@ -12,15 +14,11 @@ import torch.utils.data
 from torch.utils.data.dataloader import default_collate
 import torchvision
 import torchmultimodal.models.omnivore as omnivore
-from torchvision.datasets.vision import VisionDataset
 from torchvision.transforms.functional import InterpolationMode
 
 
-from pathlib import Path
-import json
 import time
 import os
-import PIL
 import datetime
 import numpy as np
 
@@ -30,167 +28,11 @@ import depth_presets
 import utils
 import transforms
 from sampler import RASampler
+import datasets
 
 def lprint(*x):
     print(f"[{datetime.datetime.now()}]", *x)
 
-
-# TODO: Put the dataset class on separate file
-class OmnivoreKinetics(torchvision.datasets.kinetics.Kinetics):
-    def __getitem__(self, idx):
-        video, audio, label = super().__getitem__(idx)
-        return video, label
-    
-class OmnivoreSunRgbdDatasets(VisionDataset):
-    def __init__(self, root, transform = None, target_transform = None, split="train"):
-        super().__init__(root, transform=transform, target_transform=target_transform)
-        self._data_dir = Path(self.root) / "SUNRGBD"
-        self._meta_dir = Path(self.root) / "SUNRGBDtoolbox"
-        
-        if not self._check_exists():
-            print(f"data_dir: {self._data_dir}\nmeta_dir: {self._meta_dir}")
-            raise RuntimeError("Dataset not found.")
-            
-        self.classes = ['bathroom',
-             'bedroom',
-             'classroom',
-             'computer_room',
-             'conference_room',
-             'corridor',
-             'dining_area',
-             'dining_room',
-             'discussion_area',
-             'furniture_store',
-             'home_office',
-             'kitchen',
-             'lab',
-             'lecture_theatre',
-             'library',
-             'living_room',
-             'office',
-             'rest_space',
-             'study_space'
-        ]
-        self.class_to_idx = dict(zip(self.classes, range(len(self.classes))))
-        
-        # TODO: Need to change later!
-        # Currently the file "sunrgbd_trainval_path.json" is manually created with a script
-        # We should create this file from script that is downloaded!
-        with open(Path(self.root) / "sunrgbd_trainval_path.json", "r") as fin:
-            self.trainval_image_dir_map = json.load(fin)
-            
-        self.image_dirs = [key for key, value in self.trainval_image_dir_map.items() if value == split]
-        
-        
-    def _check_exists(self):
-        return self._data_dir.is_dir() and self._meta_dir.is_dir()
-    
-    def __len__(self):
-        return len(self.image_dirs)
-
-    def _read_sunrgbd_image(self, image_dir):
-        rgb_dir = os.path.join(image_dir, "image")
-        rgb_path = os.path.join(rgb_dir, os.listdir(rgb_dir)[0])
-        img_rgb = PIL.Image.open(rgb_path)
-        arr_rgb = np.asarray(img_rgb)
-
-        # Using depth_bfx, but maybe can also consider just using depth
-        depth_dir = os.path.join(image_dir, "depth_bfx")
-        depth_path = os.path.join(depth_dir, os.listdir(depth_dir)[0])
-        img_d = PIL.Image.open(depth_path)
-        if img_d.mode == "I":
-            arr_d = (np.asarray(img_d) * 255.99999 / 2**16).astype(np.uint8)
-
-        arr_rgbd = np.dstack((arr_rgb, arr_d))
-        return arr_rgbd
-    
-    def _get_sunrgbd_scene_class(self, image_dir):
-        with open(os.path.join(image_dir, "scene.txt"), "r") as fin:
-            scene_class = fin.read().strip()
-        return scene_class
-    
-    def __getitem__(self, idx):
-        # return tuple of image (H W C==4) and scene class index
-        image_dir = self.image_dirs[idx]
-        x_rgbd = torch.tensor(self._read_sunrgbd_image(image_dir), dtype=torch.uint8)
-        x_rgbd = x_rgbd.permute(2, 0, 1) # H W C -> C H W
-        scene_class = self._get_sunrgbd_scene_class(image_dir)
-        scene_idx = self.class_to_idx[scene_class]
-        
-        if self.transform:
-            x_rgbd = self.transform(x_rgbd)
-            
-        if self.target_transform:
-            scene_idx = self.target_transform(scene_idx)
-            
-        return x_rgbd, scene_idx
-        
-        
-class ConcatIterable:
-    def __init__(self, iterables, output_keys, repeat_factors, seed=42): 
-        self.iterables = iterables
-        self.output_keys = output_keys
-        self.repeat_factors = repeat_factors
-        self.seed = seed
-        self.num_iterables = len(self.iterables)
-        assert self.num_iterables == len(output_keys)
-        assert self.num_iterables == len(repeat_factors)
-        
-        
-        # The iterator len is adjusted with repeat_factors
-        self.iterator_lens = [int(repeat_factors[i] * len(itb)) for i, itb in enumerate(self.iterables)]
-        self.max_total_steps = sum(self.iterator_lens)
-        self.indices = None
-        self.iterators = None
-        
-        # self.step_counter == None indicate that self.indices are not yet initialized
-        self.step_counter = None
-        
-    def init_indices(self, epoch=0, shuffle=False):
-        # We should initiate indices for each epoch, especially if we want to shuffle
-        self.step_counter = 0
-    
-        self.iterators = [iter(dl) for dl in self.iterables]
-        self.indices = torch.cat([torch.ones(self.iterator_lens[i], dtype=torch.int32) * i for i in range(self.num_iterables)])
-        assert self.max_total_steps == len(self.indices)
-        
-        if shuffle:
-            g = torch.Generator()
-            g.manual_seed(self.seed + epoch)
-            shuffle_indices = torch.randperm(len(self.indices), generator=g)
-            self.indices = self.indices[shuffle_indices]
-            
-    def __next__(self):
-        if self.step_counter == None:
-            # Initiate the indices without shuffle as default!
-            self.init_indices()
-        if self.step_counter >= self.max_total_steps:
-            raise StopIteration
-        
-        idx = self.indices[self.step_counter]
-        output_key = self.output_keys[idx]
-        # print(idx)
-        try:
-            batch = next(self.iterators[idx])
-        except StopIteration:
-            # We cycle over the data_loader to the beginning. This can happen when repeat_factor > 1
-            # Take note that in this case we always use same shuffling from same data_loader in an epoch
-            self.iterators[idx] = iter(self.iterables[idx])
-            batch = next(self.iterators[idx])
-        
-        self.step_counter += 1
-        # Return batch and output_key
-        return batch, output_key
-    
-    def __len__(self):
-        return self.max_total_steps
-    
-    def __iter__(self):
-        return self
-    
-    
-
-# TODO: Complete the functions!
 def get_single_data_loader_from_dataset(train_dataset, val_dataset, args):  
     if args.distributed:
         if hasattr(args, "ra_sampler") and args.ra_sampler:
@@ -227,13 +69,9 @@ def get_single_data_loader_from_dataset(train_dataset, val_dataset, args):
     return train_data_loader, val_data_loader
 
 def get_omnivore_data_loader(args):
-    # TODO: Make sure this is not hardcoded
-    # imagenet_path = "/Users/yosuamichael/Downloads/datasets/mini_omnivore/mini_imagenet"
-    # kinetics_path = "/Users/yosuamichael/Downloads/datasets/mini_omnivore/mini_kinetics"
-    # sunrgbd_path = "/Users/yosuamichael/Downloads/datasets/SUN_RGBD"
-    imagenet_path = "/data/home/yosuamichael/datasets/mini_imagenet"
-    kinetics_path = "/data/home/yosuamichael/datasets/mini_kinetics"
-    sunrgbd_path = "/data/home/yosuamichael/datasets/SUN_RGBD"
+    imagenet_path = args.imagenet_data_path
+    kinetics_path = args.kinetics_data_path
+    sunrgbd_path = args.sunrgbd_data_path
     
     train_crop_size = args.train_crop_size
     train_resize_size = args.train_resize_size
@@ -253,12 +91,12 @@ def get_omnivore_data_loader(args):
     video_train_preset = video_presets.VideoClassificationPresetTrain(crop_size=train_crop_size, resize_size=train_resize_size, )
     video_val_preset = video_presets.VideoClassificationPresetEval(crop_size=val_crop_size, resize_size=val_resize_size, )
 
-    video_train_dataset = OmnivoreKinetics(
+    video_train_dataset = datasets.OmnivoreKinetics(
         f"{kinetics_path}", 
         frames_per_clip=32, frame_rate=16, step_between_clips=32, 
         split="train", transform= video_train_preset
     )
-    video_val_dataset = OmnivoreKinetics(
+    video_val_dataset = datasets.OmnivoreKinetics(
         f"{kinetics_path}", 
         frames_per_clip=32, frame_rate=16, step_between_clips=32, 
         split="val", transform= video_val_preset
@@ -271,18 +109,18 @@ def get_omnivore_data_loader(args):
                                 random_erase_prob=0.25, )
     depth_val_preset = depth_presets.DepthClassificationPresetEval(crop_size=val_crop_size, interpolation=InterpolationMode.NEAREST,)
 
-    depth_train_dataset = OmnivoreSunRgbdDatasets(root=sunrgbd_path, split="train", transform=depth_train_preset)
-    depth_val_dataset = OmnivoreSunRgbdDatasets(root=sunrgbd_path, split="val", transform=depth_val_preset)
+    depth_train_dataset = datasets.OmnivoreSunRgbdDatasets(root=sunrgbd_path, split="train", transform=depth_train_preset)
+    depth_val_dataset = datasets.OmnivoreSunRgbdDatasets(root=sunrgbd_path, split="val", transform=depth_val_preset)
     
     depth_train_data_loader, depth_val_data_loader = get_single_data_loader_from_dataset(depth_train_dataset, depth_val_dataset, args)
     
-    train_data_loader = ConcatIterable(
+    train_data_loader = datasets.ConcatIterable(
         [imagenet_train_data_loader, video_train_data_loader, depth_train_data_loader],
         ['image', 'video', 'rgbd'],
         [1, 1, 1]
     )
     
-    val_data_loader = ConcatIterable(
+    val_data_loader = datasets.ConcatIterable(
         [imagenet_val_data_loader, video_val_data_loader, depth_val_data_loader],
         ['image', 'video', 'rgbd'],
         [0.25, 0.25, 0.25]
@@ -401,6 +239,21 @@ def main(args):
     else:
         lr_scheduler = main_lr_scheduler
 
+    if args.resume:
+        checkpoint = torch.load(args.resume, map_location="cpu")
+        model_without_ddp.load_state_dict(checkpoint["model"])
+        if not args.test_only:
+            optimizer.load_state_dict(checkpoint["optimizer"])
+            lr_scheduler.load_state_dict(checkpoint["lr_scheduler"])
+        args.start_epoch = checkpoint["epoch"] + 1
+
+    if args.test_only:
+        # We disable the cudnn benchmarking because it can noticeably affect the accuracy
+        torch.backends.cudnn.benchmark = False
+        torch.backends.cudnn.deterministic = True
+        evaluate(model, criterion, val_data_loader, device=device)
+        return
+
     # Start training
     # TODO: EDIT!
     print("Start training")
@@ -491,6 +344,16 @@ def get_args_parser(add_help=True):
     parser.add_argument("--ra-sampler", action="store_true", help="whether to use Repeated Augmentation in training")
     parser.add_argument(
         "--ra-reps", default=3, type=int, help="number of repetitions for Repeated Augmentation (default: 3)"
+    )
+    parser.add_argument("--imagenet-data-path", type=str, help="Root directory path of imagenet dataset")
+    parser.add_argument("--kinetics-data-path", type=str, help="Root directory path of kinetics dataset")
+    parser.add_argument("--sunrgbd-data-path", type=str, help="Root directory path of sunrgbd dataset")
+    parser.add_argument("--resume", default="", type=str, help="path of checkpoint")
+    parser.add_argument(
+        "--test-only",
+        dest="test_only",
+        help="Only test the model",
+        action="store_true",
     )
     return parser
 
