@@ -38,13 +38,13 @@ class RandomMixup(torch.nn.Module):
     def forward(self, batch: Tensor, target: Tensor) -> Tuple[Tensor, Tensor]:
         """
         Args:
-            batch (Tensor): Float tensor of size (B, C, H, W)
+            batch (Tensor): Float tensor of size (..., H, W)
             target (Tensor): Integer tensor of size (B, )
 
         Returns:
             Tensor: Randomly transformed batch.
         """
-        if batch.ndim != 4:
+        if batch.ndim < 4:
             raise ValueError(f"Batch ndim should be 4. Got {batch.ndim}")
         if target.ndim != 1:
             raise ValueError(f"Target ndim should be 1. Got {target.ndim}")
@@ -118,13 +118,13 @@ class RandomCutmix(torch.nn.Module):
     def forward(self, batch: Tensor, target: Tensor) -> Tuple[Tensor, Tensor]:
         """
         Args:
-            batch (Tensor): Float tensor of size (B, C, H, W)
+            batch (Tensor): Float tensor of size (..., H, W)
             target (Tensor): Integer tensor of size (B, )
 
         Returns:
             Tensor: Randomly transformed batch.
         """
-        if batch.ndim != 4:
+        if batch.ndim < 4:
             raise ValueError(f"Batch ndim should be 4. Got {batch.ndim}")
         if target.ndim != 1:
             raise ValueError(f"Target ndim should be 1. Got {target.ndim}")
@@ -149,7 +149,7 @@ class RandomCutmix(torch.nn.Module):
 
         # Implemented as on cutmix paper, page 12 (with minor corrections on typos).
         lambda_param = float(torch._sample_dirichlet(torch.tensor([self.alpha, self.alpha]))[0])
-        _, H, W = F.get_dimensions(batch)
+        H, W = batch.shape[-2:]
 
         r_x = torch.randint(W, (1,))
         r_y = torch.randint(H, (1,))
@@ -163,7 +163,7 @@ class RandomCutmix(torch.nn.Module):
         x2 = int(torch.clamp(r_x + r_w_half, max=W))
         y2 = int(torch.clamp(r_y + r_h_half, max=H))
 
-        batch[:, :, y1:y2, x1:x2] = batch_rolled[:, :, y1:y2, x1:x2]
+        batch[..., y1:y2, x1:x2] = batch_rolled[..., y1:y2, x1:x2]
         lambda_param = float(1.0 - (x2 - x1) * (y2 - y1) / (W * H))
 
         target_rolled.mul_(1.0 - lambda_param)

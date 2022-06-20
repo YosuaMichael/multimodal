@@ -1,6 +1,15 @@
 # Build simple omnivore training loop from bottom up
+
+# TODO:
+# - [P0] Able to run distributed [DONE]
+# - [P0] Refactor the dataset to separate file (and update sunrgbd class to not using manual json)
+# - [P0] Enable to resume checkpoint and do evaluation only
+# - [P2] Enable using EMA during training
+
 import torch
 import torch.nn as nn
+import torch.utils.data
+from torch.utils.data.dataloader import default_collate
 import torchvision
 import torchmultimodal.models.omnivore as omnivore
 from torchvision.datasets.vision import VisionDataset
@@ -19,6 +28,8 @@ import image_presets
 import video_presets
 import depth_presets
 import utils
+import transforms
+from sampler import RASampler
 
 def lprint(*x):
     print(f"[{datetime.datetime.now()}]", *x)
@@ -181,8 +192,15 @@ class ConcatIterable:
 
 # TODO: Complete the functions!
 def get_single_data_loader_from_dataset(train_dataset, val_dataset, args):  
-    train_sampler = torch.utils.data.RandomSampler(train_dataset)
-    test_sampler = torch.utils.data.SequentialSampler(val_dataset)
+    if args.distributed:
+        if hasattr(args, "ra_sampler") and args.ra_sampler:
+            train_sampler = RASampler(train_dataset, shuffle=True, repetitions=args.ra_reps)
+        else:
+            train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset)
+        test_sampler = torch.utils.data.distributed.DistributedSampler(val_dataset, shuffle=False)
+    else:
+        train_sampler = torch.utils.data.RandomSampler(train_dataset)
+        test_sampler = torch.utils.data.SequentialSampler(val_dataset)
 
     collate_fn = None
     num_classes = len(train_dataset.classes)
@@ -267,7 +285,7 @@ def get_omnivore_data_loader(args):
     val_data_loader = ConcatIterable(
         [imagenet_val_data_loader, video_val_data_loader, depth_val_data_loader],
         ['image', 'video', 'rgbd'],
-        [1, 1, 1]
+        [0.25, 0.25, 0.25]
     )
 
     return train_data_loader, val_data_loader
@@ -294,7 +312,7 @@ def train_one_epoch(model, criterion, optimizer, data_loader, device, epoch, arg
 
 def evaluate(model, criterion, val_data_loader, device):
     model.eval()
-    data_loader.init_indices(epoch=0, shuffle=False)
+    val_data_loader.init_indices(epoch=0, shuffle=False)
     with torch.inference_mode():
         acc1s, acc5s = [], []
         try:
@@ -317,6 +335,9 @@ def evaluate(model, criterion, val_data_loader, device):
 
 
 def main(args):
+    # Will check if it has distributed setup,
+    # it will set args.distributed and args.gpu accordingly
+    utils.init_distributed_mode(args)
     print(args)
     device = torch.device(args.device)
     
@@ -327,6 +348,14 @@ def main(args):
     # TODO: Let user choose omnivore variant from args
     model = omnivore.omnivore_swin_t()
     model.to(device)
+
+    if args.distributed and args.sync_bn:
+        model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
+
+    model_without_ddp = model
+    if args.distributed:
+        model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu], find_unused_parameters=True)
+        model_without_ddp = model.module
     
     # Get dataset
     # TODO: Finish the function get_data_loader()!
@@ -372,9 +401,6 @@ def main(args):
     else:
         lr_scheduler = main_lr_scheduler
 
-    # DELETEME: DEBUGGING eval
-    evaluate(model, criterion, val_data_loader, device=device)
-    
     # Start training
     # TODO: EDIT!
     print("Start training")
@@ -385,7 +411,7 @@ def main(args):
         evaluate(model, criterion, val_data_loader, device=device)
         if args.output_dir:
             checkpoint = {
-                "model": model.state_dict(),
+                "model": model_without_ddp.state_dict(),
                 "optimizer": optimizer.state_dict(),
                 "lr_scheduler": lr_scheduler.state_dict(),
                 "epoch": epoch,
@@ -452,6 +478,19 @@ def get_args_parser(add_help=True):
     )
     parser.add_argument(
         "--val-crop-size", default=224, type=int, help="the central crop size used for validation (default: 224)"
+    )
+    # distributed training parameters
+    parser.add_argument("--world-size", default=1, type=int, help="number of distributed processes")
+    parser.add_argument("--dist-url", default="env://", type=str, help="url used to set up distributed training")
+    parser.add_argument(
+        "--sync-bn",
+        dest="sync_bn",
+        help="Use sync batch norm",
+        action="store_true",
+    )
+    parser.add_argument("--ra-sampler", action="store_true", help="whether to use Repeated Augmentation in training")
+    parser.add_argument(
+        "--ra-reps", default=3, type=int, help="number of repetitions for Repeated Augmentation (default: 3)"
     )
     return parser
 
