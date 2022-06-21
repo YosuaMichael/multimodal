@@ -1,3 +1,9 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+# All rights reserved.
+#
+# This source code is licensed under the BSD-style license found in the
+# LICENSE file in the root directory of this source tree.
+
 import copy
 import datetime
 import errno
@@ -62,7 +68,11 @@ class SmoothedValue:
 
     def __str__(self):
         return self.fmt.format(
-            median=self.median, avg=self.avg, global_avg=self.global_avg, max=self.max, value=self.value
+            median=self.median,
+            avg=self.avg,
+            global_avg=self.global_avg,
+            max=self.max,
+            value=self.value,
         )
 
 
@@ -83,7 +93,9 @@ class MetricLogger:
             return self.meters[attr]
         if attr in self.__dict__:
             return self.__dict__[attr]
-        raise AttributeError(f"'{type(self).__name__}' object has no attribute '{attr}'")
+        raise AttributeError(
+            f"'{type(self).__name__}' object has no attribute '{attr}'"
+        )
 
     def __str__(self):
         loss_str = []
@@ -121,7 +133,14 @@ class MetricLogger:
             )
         else:
             log_msg = self.delimiter.join(
-                [header, "[{0" + space_fmt + "}/{1}]", "eta: {eta}", "{meters}", "time: {time}", "data: {data}"]
+                [
+                    header,
+                    "[{0" + space_fmt + "}/{1}]",
+                    "eta: {eta}",
+                    "{meters}",
+                    "time: {time}",
+                    "data: {data}",
+                ]
             )
         MB = 1024.0 * 1024.0
         for obj in iterable:
@@ -146,7 +165,12 @@ class MetricLogger:
                 else:
                     print(
                         log_msg.format(
-                            i, len(iterable), eta=eta_string, meters=str(self), time=str(iter_time), data=str(data_time)
+                            i,
+                            len(iterable),
+                            eta=eta_string,
+                            meters=str(self),
+                            time=str(iter_time),
+                            data=str(data_time),
                         )
                     )
             i += 1
@@ -263,7 +287,10 @@ def init_distributed_mode(args):
     args.dist_backend = "nccl"
     print(f"| distributed init (rank {args.rank}): {args.dist_url}", flush=True)
     torch.distributed.init_process_group(
-        backend=args.dist_backend, init_method=args.dist_url, world_size=args.world_size, rank=args.rank
+        backend=args.dist_backend,
+        init_method=args.dist_url,
+        world_size=args.world_size,
+        rank=args.rank,
     )
     torch.distributed.barrier()
     setup_for_distributed(args.rank == 0)
@@ -288,7 +315,9 @@ def average_checkpoints(inputs):
         with open(fpath, "rb") as f:
             state = torch.load(
                 f,
-                map_location=(lambda s, _: torch.serialization.default_restore_location(s, "cpu")),
+                map_location=(
+                    lambda s, _: torch.serialization.default_restore_location(s, "cpu")
+                ),
             )
         # Copies over the settings from the first checkpoint
         if new_state is None:
@@ -373,7 +402,9 @@ def store_model_weights(model, checkpoint_path, checkpoint_key="model", strict=T
     # and remove unnecessary weights (such as auxiliaries, etc)
     if checkpoint_key == "model_ema":
         del checkpoint[checkpoint_key]["n_averaged"]
-        torch.nn.modules.utils.consume_prefix_in_state_dict_if_present(checkpoint[checkpoint_key], "module.")
+        torch.nn.modules.utils.consume_prefix_in_state_dict_if_present(
+            checkpoint[checkpoint_key], "module."
+        )
     model.load_state_dict(checkpoint[checkpoint_key], strict=strict)
 
     tmp_path = os.path.join(output_dir, str(model.__hash__()))
@@ -441,7 +472,9 @@ def set_weight_decay(
                 continue
             is_custom_key = False
             for key in custom_keys:
-                target_name = f"{prefix}.{name}" if prefix != "" and "." in key else name
+                target_name = (
+                    f"{prefix}.{name}" if prefix != "" and "." in key else name
+                )
                 if key == target_name:
                     params[key].append(p)
                     is_custom_key = True
@@ -461,5 +494,7 @@ def set_weight_decay(
     param_groups = []
     for key in params:
         if len(params[key]) > 0:
-            param_groups.append({"params": params[key], "weight_decay": params_weight_decay[key]})
+            param_groups.append(
+                {"params": params[key], "weight_decay": params_weight_decay[key]}
+            )
     return param_groups

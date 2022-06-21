@@ -1,17 +1,25 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+# All rights reserved.
+#
+# This source code is licensed under the BSD-style license found in the
+# LICENSE file in the root directory of this source tree.
+
 import math
-from enum import Enum
-from typing import List, Tuple, Optional, Dict
+from typing import Dict, List, Optional, Tuple
 
 import torch
 from torch import Tensor
-
 from torchvision.transforms import functional as F, InterpolationMode
 
-__all__ = [ "RandAugment3d"]
+__all__ = ["RandAugment3d"]
 
 
 def _apply_op(
-    img: Tensor, op_name: str, magnitude: float, interpolation: InterpolationMode, fill: Optional[List[float]]
+    img: Tensor,
+    op_name: str,
+    magnitude: float,
+    interpolation: InterpolationMode,
+    fill: Optional[List[float]],
 ):
     if op_name == "ShearX":
         # magnitude should be arctan(magnitude)
@@ -88,7 +96,7 @@ def _apply_op(
     else:
         raise ValueError(f"The provided operator {op_name} is not recognized.")
     return img
-    
+
 
 class RandAugment3d(torch.nn.Module):
     r"""**Modified RandAugment in order to handle single-view depth image**
@@ -125,23 +133,39 @@ class RandAugment3d(torch.nn.Module):
         self.interpolation = interpolation
         self.fill = fill
         self.geom_ops = {
-            "Identity", "ShearX", "ShearY", "TranslateX", "TranslateY", "Rotate",
+            "Identity",
+            "ShearX",
+            "ShearY",
+            "TranslateX",
+            "TranslateY",
+            "Rotate",
         }
 
-    def _augmentation_space(self, num_bins: int, image_size: Tuple[int, int]) -> Dict[str, Tuple[Tensor, bool]]:
+    def _augmentation_space(
+        self, num_bins: int, image_size: Tuple[int, int]
+    ) -> Dict[str, Tuple[Tensor, bool]]:
         return {
             # op_name: (magnitudes, signed)
             "Identity": (torch.tensor(0.0), False),
             "ShearX": (torch.linspace(0.0, 0.3, num_bins), True),
             "ShearY": (torch.linspace(0.0, 0.3, num_bins), True),
-            "TranslateX": (torch.linspace(0.0, 150.0 / 331.0 * image_size[1], num_bins), True),
-            "TranslateY": (torch.linspace(0.0, 150.0 / 331.0 * image_size[0], num_bins), True),
+            "TranslateX": (
+                torch.linspace(0.0, 150.0 / 331.0 * image_size[1], num_bins),
+                True,
+            ),
+            "TranslateY": (
+                torch.linspace(0.0, 150.0 / 331.0 * image_size[0], num_bins),
+                True,
+            ),
             "Rotate": (torch.linspace(0.0, 30.0, num_bins), True),
             "Brightness": (torch.linspace(0.0, 0.9, num_bins), True),
             "Color": (torch.linspace(0.0, 0.9, num_bins), True),
             "Contrast": (torch.linspace(0.0, 0.9, num_bins), True),
             "Sharpness": (torch.linspace(0.0, 0.9, num_bins), True),
-            "Posterize": (8 - (torch.arange(num_bins) / ((num_bins - 1) / 4)).round().int(), False),
+            "Posterize": (
+                8 - (torch.arange(num_bins) / ((num_bins - 1) / 4)).round().int(),
+                False,
+            ),
             "Solarize": (torch.linspace(255.0, 0.0, num_bins), False),
             "AutoContrast": (torch.tensor(0.0), False),
             "Equalize": (torch.tensor(0.0), False),
@@ -167,15 +191,25 @@ class RandAugment3d(torch.nn.Module):
             op_index = int(torch.randint(len(op_meta), (1,)).item())
             op_name = list(op_meta.keys())[op_index]
             magnitudes, signed = op_meta[op_name]
-            magnitude = float(magnitudes[self.magnitude].item()) if magnitudes.ndim > 0 else 0.0
+            magnitude = (
+                float(magnitudes[self.magnitude].item()) if magnitudes.ndim > 0 else 0.0
+            )
             if signed and torch.randint(2, (1,)):
                 magnitude *= -1.0
             if op_name in self.geom_ops:
                 # apply geometric operation on RGBD image
-                img = _apply_op(img, op_name, magnitude, interpolation=self.interpolation, fill=fill)
+                img = _apply_op(
+                    img, op_name, magnitude, interpolation=self.interpolation, fill=fill
+                )
             else:
                 # Apply non_geom operation on the RGB channels only
-                img[:3, :, :] = _apply_op(img[:3,:,:], op_name, magnitude, interpolation=self.interpolation, fill=fill)
+                img[:3, :, :] = _apply_op(
+                    img[:3, :, :],
+                    op_name,
+                    magnitude,
+                    interpolation=self.interpolation,
+                    fill=fill,
+                )
         return img
 
     def __repr__(self) -> str:
@@ -189,4 +223,3 @@ class RandAugment3d(torch.nn.Module):
             f")"
         )
         return s
-

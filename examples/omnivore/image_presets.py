@@ -1,13 +1,22 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+# All rights reserved.
+#
+# This source code is licensed under the BSD-style license found in the
+# LICENSE file in the root directory of this source tree.
+
 import torch
 from torchvision.transforms import autoaugment, transforms
 from torchvision.transforms.functional import InterpolationMode
+
 
 class Unsqueeze(torch.nn.Module):
     def __init__(self, pos=0):
         super().__init__()
         self.pos = pos
+
     def forward(self, x):
         return x.unsqueeze(self.pos)
+
 
 class ImageNetClassificationPresetTrain:
     def __init__(
@@ -28,16 +37,24 @@ class ImageNetClassificationPresetTrain:
             if auto_augment_policy == "ra":
                 trans.append(autoaugment.RandAugment(interpolation=interpolation))
             elif auto_augment_policy == "ta_wide":
-                trans.append(autoaugment.TrivialAugmentWide(interpolation=interpolation))
+                trans.append(
+                    autoaugment.TrivialAugmentWide(interpolation=interpolation)
+                )
             elif auto_augment_policy == "augmix":
                 trans.append(autoaugment.AugMix(interpolation=interpolation))
             else:
                 aa_policy = autoaugment.AutoAugmentPolicy(auto_augment_policy)
-                trans.append(autoaugment.AutoAugment(policy=aa_policy, interpolation=interpolation))
+                trans.append(
+                    autoaugment.AutoAugment(
+                        policy=aa_policy, interpolation=interpolation
+                    )
+                )
         trans.extend(
             [
                 # ADDING ColorJitter
-                transforms.ColorJitter(brightness=0.4, contrast=0.4, saturation=0.4, hue=0.4),
+                transforms.ColorJitter(
+                    brightness=0.4, contrast=0.4, saturation=0.4, hue=0.4
+                ),
                 transforms.PILToTensor(),
                 transforms.ConvertImageDtype(torch.float),
                 transforms.Normalize(mean=mean, std=std),
@@ -45,7 +62,7 @@ class ImageNetClassificationPresetTrain:
         )
         if random_erase_prob > 0:
             trans.append(transforms.RandomErasing(p=random_erase_prob))
-            
+
         # For omnivore to make the image look like a video with C D H W layout
         trans.append(Unsqueeze(pos=1))
 

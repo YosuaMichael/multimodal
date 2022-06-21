@@ -1,23 +1,32 @@
-import torch
-import numpy as np
-from torchvision.transforms import autoaugment, transforms
-from torchvision.transforms.functional import InterpolationMode
-from rand_aug3d import RandAugment3d
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+# All rights reserved.
+#
+# This source code is licensed under the BSD-style license found in the
+# LICENSE file in the root directory of this source tree.
 
+import numpy as np
+import torch
+from rand_aug3d import RandAugment3d
 from torch import nn
+from torchvision.transforms import transforms
+from torchvision.transforms.functional import InterpolationMode
+
 
 class ColorJitter3d(transforms.ColorJitter):
     def forward(self, img):
         assert isinstance(img, torch.Tensor)
         img[:3, :, :] = super().forward(img[:3, :, :])
         return img
-    
+
+
 class Unsqueeze(torch.nn.Module):
     def __init__(self, pos=0):
         super().__init__()
         self.pos = pos
+
     def forward(self, x):
         return x.unsqueeze(self.pos)
+
 
 # From original implementation https://www.internalfb.com/code/fbsource/[f1a98f41bcce7ee621f0248a6e0235a3e3dea628]/fbcode/deeplearning/projects/omnivore/vissl/data/ssl_transforms/depth_transforms.py?lines=13
 class DropChannels(nn.Module):
@@ -46,7 +55,7 @@ class DropChannels(nn.Module):
         self.fill_values = fill_values
         self.tie_channels = tie_channels
         self.all_channel_drop = all_channel_drop
-        
+
         if tie_channels is not None:
             tie_probs = [channel_probs[x] for x in tie_channels]
             assert len(set(tie_probs)) == 1, "All tie_channel probs must be equal"
@@ -92,6 +101,7 @@ class DropChannels(nn.Module):
                 raise NotImplementedError()
         return x
 
+
 # From original implementation https://www.internalfb.com/code/fbsource/[f1a98f41bcce7ee621f0248a6e0235a3e3dea628]/fbcode/deeplearning/projects/omnivore/vissl/data/ssl_transforms/depth_normalize.py
 class RGBToFloatAndDepthNorm(nn.Module):
     """
@@ -125,12 +135,12 @@ class RGBToFloatAndDepthNorm(nn.Module):
                 f"This transform is for 4 channel RGBD input only; got {image.shape}"
             )
             raise ValueError(err_msg)
-        
+
         assert image.dtype == torch.uint8
-        
+
         color_img = image[:3, ...].float()  # (3, H, W)
         depth_img = image[3:4, ...].float()  # (1, H, W)
-        
+
         # Convert color_img to float with range [0, 1]
         color_img /= 255
 
@@ -145,7 +155,7 @@ class RGBToFloatAndDepthNorm(nn.Module):
 
         img = torch.cat([color_img, depth_img], dim=0)
         return img
-    
+
 
 class DepthClassificationPresetTrain:
     def __init__(
@@ -158,13 +168,11 @@ class DepthClassificationPresetTrain:
         hflip_prob=0.5,
         random_erase_prob=0.0,
     ):
-        trans = [
-            transforms.RandomResizedCrop(crop_size, interpolation=interpolation)
-        ]
+        trans = [transforms.RandomResizedCrop(crop_size, interpolation=interpolation)]
 
         if hflip_prob > 0:
             trans.append(transforms.RandomHorizontalFlip(hflip_prob))
-            
+
         trans.extend(
             [
                 RandAugment3d(interpolation=interpolation, num_ops=1),
@@ -175,9 +183,15 @@ class DepthClassificationPresetTrain:
         )
         if random_erase_prob > 0:
             trans.append(transforms.RandomErasing(p=random_erase_prob))
-            
+
         trans.append(transforms.Normalize(mean=mean, std=std))
-        trans.append(DropChannels(channel_probs=[0.5, 0.5, 0.5, 0], tie_channels=[0, 1, 2], fill_values=[0, 0, 0, 0]))
+        trans.append(
+            DropChannels(
+                channel_probs=[0.5, 0.5, 0.5, 0],
+                tie_channels=[0, 1, 2],
+                fill_values=[0, 0, 0, 0],
+            )
+        )
         # For omnivore to make the rgbd look like video with C D H W layout
         trans.append(Unsqueeze(pos=1))
 

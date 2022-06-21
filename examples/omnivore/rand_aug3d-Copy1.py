@@ -1,17 +1,32 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+# All rights reserved.
+#
+# This source code is licensed under the BSD-style license found in the
+# LICENSE file in the root directory of this source tree.
+
 import math
 from enum import Enum
-from typing import List, Tuple, Optional, Dict
+from typing import Dict, List, Optional, Tuple
 
 import torch
 from torch import Tensor
-
 from torchvision.transforms import functional as F, InterpolationMode
 
-__all__ = ["AutoAugmentPolicy", "AutoAugment", "RandAugment3d", "TrivialAugmentWide", "AugMix"]
+__all__ = [
+    "AutoAugmentPolicy",
+    "AutoAugment",
+    "RandAugment3d",
+    "TrivialAugmentWide",
+    "AugMix",
+]
 
 
 def _apply_op(
-    img: Tensor, op_name: str, magnitude: float, interpolation: InterpolationMode, fill: Optional[List[float]]
+    img: Tensor,
+    op_name: str,
+    magnitude: float,
+    interpolation: InterpolationMode,
+    fill: Optional[List[float]],
 ):
     if op_name == "ShearX":
         # magnitude should be arctan(magnitude)
@@ -132,7 +147,9 @@ class AutoAugment(torch.nn.Module):
 
     def _get_policies(
         self, policy: AutoAugmentPolicy
-    ) -> List[Tuple[Tuple[str, float, Optional[int]], Tuple[str, float, Optional[int]]]]:
+    ) -> List[
+        Tuple[Tuple[str, float, Optional[int]], Tuple[str, float, Optional[int]]]
+    ]:
         if policy == AutoAugmentPolicy.IMAGENET:
             return [
                 (("Posterize", 0.4, 8), ("Rotate", 0.6, 9)),
@@ -220,19 +237,30 @@ class AutoAugment(torch.nn.Module):
         else:
             raise ValueError(f"The provided policy {policy} is not recognized.")
 
-    def _augmentation_space(self, num_bins: int, image_size: Tuple[int, int]) -> Dict[str, Tuple[Tensor, bool]]:
+    def _augmentation_space(
+        self, num_bins: int, image_size: Tuple[int, int]
+    ) -> Dict[str, Tuple[Tensor, bool]]:
         return {
             # op_name: (magnitudes, signed)
             "ShearX": (torch.linspace(0.0, 0.3, num_bins), True),
             "ShearY": (torch.linspace(0.0, 0.3, num_bins), True),
-            "TranslateX": (torch.linspace(0.0, 150.0 / 331.0 * image_size[1], num_bins), True),
-            "TranslateY": (torch.linspace(0.0, 150.0 / 331.0 * image_size[0], num_bins), True),
+            "TranslateX": (
+                torch.linspace(0.0, 150.0 / 331.0 * image_size[1], num_bins),
+                True,
+            ),
+            "TranslateY": (
+                torch.linspace(0.0, 150.0 / 331.0 * image_size[0], num_bins),
+                True,
+            ),
             "Rotate": (torch.linspace(0.0, 30.0, num_bins), True),
             "Brightness": (torch.linspace(0.0, 0.9, num_bins), True),
             "Color": (torch.linspace(0.0, 0.9, num_bins), True),
             "Contrast": (torch.linspace(0.0, 0.9, num_bins), True),
             "Sharpness": (torch.linspace(0.0, 0.9, num_bins), True),
-            "Posterize": (8 - (torch.arange(num_bins) / ((num_bins - 1) / 4)).round().int(), False),
+            "Posterize": (
+                8 - (torch.arange(num_bins) / ((num_bins - 1) / 4)).round().int(),
+                False,
+            ),
             "Solarize": (torch.linspace(255.0, 0.0, num_bins), False),
             "AutoContrast": (torch.tensor(0.0), False),
             "Equalize": (torch.tensor(0.0), False),
@@ -273,17 +301,22 @@ class AutoAugment(torch.nn.Module):
         for i, (op_name, p, magnitude_id) in enumerate(self.policies[transform_id]):
             if probs[i] <= p:
                 magnitudes, signed = op_meta[op_name]
-                magnitude = float(magnitudes[magnitude_id].item()) if magnitude_id is not None else 0.0
+                magnitude = (
+                    float(magnitudes[magnitude_id].item())
+                    if magnitude_id is not None
+                    else 0.0
+                )
                 if signed and signs[i] == 0:
                     magnitude *= -1.0
-                img = _apply_op(img, op_name, magnitude, interpolation=self.interpolation, fill=fill)
+                img = _apply_op(
+                    img, op_name, magnitude, interpolation=self.interpolation, fill=fill
+                )
 
         return img
 
     def __repr__(self) -> str:
         return f"{self.__class__.__name__}(policy={self.policy}, fill={self.fill})"
 
-    
 
 class RandAugment3d(torch.nn.Module):
     r"""**Modified RandAugment in order to handle single-view depth image**
@@ -320,23 +353,39 @@ class RandAugment3d(torch.nn.Module):
         self.interpolation = interpolation
         self.fill = fill
         self.geom_ops = {
-            "Identity", "ShearX", "ShearY", "TranslateX", "TranslateY", "Rotate",
+            "Identity",
+            "ShearX",
+            "ShearY",
+            "TranslateX",
+            "TranslateY",
+            "Rotate",
         }
 
-    def _augmentation_space(self, num_bins: int, image_size: Tuple[int, int]) -> Dict[str, Tuple[Tensor, bool]]:
+    def _augmentation_space(
+        self, num_bins: int, image_size: Tuple[int, int]
+    ) -> Dict[str, Tuple[Tensor, bool]]:
         return {
             # op_name: (magnitudes, signed)
             "Identity": (torch.tensor(0.0), False),
             "ShearX": (torch.linspace(0.0, 0.3, num_bins), True),
             "ShearY": (torch.linspace(0.0, 0.3, num_bins), True),
-            "TranslateX": (torch.linspace(0.0, 150.0 / 331.0 * image_size[1], num_bins), True),
-            "TranslateY": (torch.linspace(0.0, 150.0 / 331.0 * image_size[0], num_bins), True),
+            "TranslateX": (
+                torch.linspace(0.0, 150.0 / 331.0 * image_size[1], num_bins),
+                True,
+            ),
+            "TranslateY": (
+                torch.linspace(0.0, 150.0 / 331.0 * image_size[0], num_bins),
+                True,
+            ),
             "Rotate": (torch.linspace(0.0, 30.0, num_bins), True),
             "Brightness": (torch.linspace(0.0, 0.9, num_bins), True),
             "Color": (torch.linspace(0.0, 0.9, num_bins), True),
             "Contrast": (torch.linspace(0.0, 0.9, num_bins), True),
             "Sharpness": (torch.linspace(0.0, 0.9, num_bins), True),
-            "Posterize": (8 - (torch.arange(num_bins) / ((num_bins - 1) / 4)).round().int(), False),
+            "Posterize": (
+                8 - (torch.arange(num_bins) / ((num_bins - 1) / 4)).round().int(),
+                False,
+            ),
             "Solarize": (torch.linspace(255.0, 0.0, num_bins), False),
             "AutoContrast": (torch.tensor(0.0), False),
             "Equalize": (torch.tensor(0.0), False),
@@ -362,18 +411,28 @@ class RandAugment3d(torch.nn.Module):
             op_index = int(torch.randint(len(op_meta), (1,)).item())
             op_name = list(op_meta.keys())[op_index]
             magnitudes, signed = op_meta[op_name]
-            magnitude = float(magnitudes[self.magnitude].item()) if magnitudes.ndim > 0 else 0.0
+            magnitude = (
+                float(magnitudes[self.magnitude].item()) if magnitudes.ndim > 0 else 0.0
+            )
             if signed and torch.randint(2, (1,)):
                 magnitude *= -1.0
             if op_name in self.geom_ops:
                 print(f"Apply geom operation: {op_name}.")
                 print(f"Before: {img[:3, :3, :3]}, {img[3, :3, :3]}")
-                img = _apply_op(img, op_name, magnitude, interpolation=self.interpolation, fill=fill)
+                img = _apply_op(
+                    img, op_name, magnitude, interpolation=self.interpolation, fill=fill
+                )
                 print(f"After: {img[:3, :3, :3]}, {img[3, :3, :3]}")
             else:
                 print(f"Apply non-geom operation: {op_name}. Separate rgb image!")
                 print(f"Before: {img[:3, :3, :3]}, {img[3, :3, :3]}")
-                img[:3, :, :] = _apply_op(img[:3,:,:], op_name, magnitude, interpolation=self.interpolation, fill=fill)
+                img[:3, :, :] = _apply_op(
+                    img[:3, :, :],
+                    op_name,
+                    magnitude,
+                    interpolation=self.interpolation,
+                    fill=fill,
+                )
                 print(f"After: {img[:3, :3, :3]}, {img[3, :3, :3]}")
         return img
 
@@ -430,7 +489,10 @@ class TrivialAugmentWide(torch.nn.Module):
             "Color": (torch.linspace(0.0, 0.99, num_bins), True),
             "Contrast": (torch.linspace(0.0, 0.99, num_bins), True),
             "Sharpness": (torch.linspace(0.0, 0.99, num_bins), True),
-            "Posterize": (8 - (torch.arange(num_bins) / ((num_bins - 1) / 6)).round().int(), False),
+            "Posterize": (
+                8 - (torch.arange(num_bins) / ((num_bins - 1) / 6)).round().int(),
+                False,
+            ),
             "Solarize": (torch.linspace(255.0, 0.0, num_bins), False),
             "AutoContrast": (torch.tensor(0.0), False),
             "Equalize": (torch.tensor(0.0), False),
@@ -456,14 +518,20 @@ class TrivialAugmentWide(torch.nn.Module):
         op_name = list(op_meta.keys())[op_index]
         magnitudes, signed = op_meta[op_name]
         magnitude = (
-            float(magnitudes[torch.randint(len(magnitudes), (1,), dtype=torch.long)].item())
+            float(
+                magnitudes[
+                    torch.randint(len(magnitudes), (1,), dtype=torch.long)
+                ].item()
+            )
             if magnitudes.ndim > 0
             else 0.0
         )
         if signed and torch.randint(2, (1,)):
             magnitude *= -1.0
 
-        return _apply_op(img, op_name, magnitude, interpolation=self.interpolation, fill=fill)
+        return _apply_op(
+            img, op_name, magnitude, interpolation=self.interpolation, fill=fill
+        )
 
     def __repr__(self) -> str:
         s = (
@@ -510,7 +578,9 @@ class AugMix(torch.nn.Module):
         super().__init__()
         self._PARAMETER_MAX = 10
         if not (1 <= severity <= self._PARAMETER_MAX):
-            raise ValueError(f"The severity must be between [1, {self._PARAMETER_MAX}]. Got {severity} instead.")
+            raise ValueError(
+                f"The severity must be between [1, {self._PARAMETER_MAX}]. Got {severity} instead."
+            )
         self.severity = severity
         self.mixture_width = mixture_width
         self.chain_depth = chain_depth
@@ -519,7 +589,9 @@ class AugMix(torch.nn.Module):
         self.interpolation = interpolation
         self.fill = fill
 
-    def _augmentation_space(self, num_bins: int, image_size: Tuple[int, int]) -> Dict[str, Tuple[Tensor, bool]]:
+    def _augmentation_space(
+        self, num_bins: int, image_size: Tuple[int, int]
+    ) -> Dict[str, Tuple[Tensor, bool]]:
         s = {
             # op_name: (magnitudes, signed)
             "ShearX": (torch.linspace(0.0, 0.3, num_bins), True),
@@ -527,7 +599,10 @@ class AugMix(torch.nn.Module):
             "TranslateX": (torch.linspace(0.0, image_size[1] / 3.0, num_bins), True),
             "TranslateY": (torch.linspace(0.0, image_size[0] / 3.0, num_bins), True),
             "Rotate": (torch.linspace(0.0, 30.0, num_bins), True),
-            "Posterize": (4 - (torch.arange(num_bins) / ((num_bins - 1) / 4)).round().int(), False),
+            "Posterize": (
+                4 - (torch.arange(num_bins) / ((num_bins - 1) / 4)).round().int(),
+                False,
+            ),
             "Solarize": (torch.linspace(255.0, 0.0, num_bins), False),
             "AutoContrast": (torch.tensor(0.0), False),
             "Equalize": (torch.tensor(0.0), False),
@@ -582,30 +657,44 @@ class AugMix(torch.nn.Module):
         # Sample the beta weights for combining the original and augmented image. To get Beta, we use a Dirichlet
         # with 2 parameters. The 1st column stores the weights of the original and the 2nd the ones of augmented image.
         m = self._sample_dirichlet(
-            torch.tensor([self.alpha, self.alpha], device=batch.device).expand(batch_dims[0], -1)
+            torch.tensor([self.alpha, self.alpha], device=batch.device).expand(
+                batch_dims[0], -1
+            )
         )
 
         # Sample the mixing weights and combine them with the ones sampled from Beta for the augmented images.
         combined_weights = self._sample_dirichlet(
-            torch.tensor([self.alpha] * self.mixture_width, device=batch.device).expand(batch_dims[0], -1)
+            torch.tensor([self.alpha] * self.mixture_width, device=batch.device).expand(
+                batch_dims[0], -1
+            )
         ) * m[:, 1].view([batch_dims[0], -1])
 
         mix = m[:, 0].view(batch_dims) * batch
         for i in range(self.mixture_width):
             aug = batch
-            depth = self.chain_depth if self.chain_depth > 0 else int(torch.randint(low=1, high=4, size=(1,)).item())
+            depth = (
+                self.chain_depth
+                if self.chain_depth > 0
+                else int(torch.randint(low=1, high=4, size=(1,)).item())
+            )
             for _ in range(depth):
                 op_index = int(torch.randint(len(op_meta), (1,)).item())
                 op_name = list(op_meta.keys())[op_index]
                 magnitudes, signed = op_meta[op_name]
                 magnitude = (
-                    float(magnitudes[torch.randint(self.severity, (1,), dtype=torch.long)].item())
+                    float(
+                        magnitudes[
+                            torch.randint(self.severity, (1,), dtype=torch.long)
+                        ].item()
+                    )
                     if magnitudes.ndim > 0
                     else 0.0
                 )
                 if signed and torch.randint(2, (1,)):
                     magnitude *= -1.0
-                aug = _apply_op(aug, op_name, magnitude, interpolation=self.interpolation, fill=fill)
+                aug = _apply_op(
+                    aug, op_name, magnitude, interpolation=self.interpolation, fill=fill
+                )
             mix.add_(combined_weights[:, i].view(batch_dims) * aug)
         mix = mix.view(orig_dims).to(dtype=img.dtype)
 
