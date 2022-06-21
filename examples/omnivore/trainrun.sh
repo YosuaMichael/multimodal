@@ -5,6 +5,11 @@ python train.py --batch-size=2 --workers=2 --device=cpu --output-dir="train_outp
     --kinetics-data-path="/Users/yosuamichael/Downloads/datasets/mini_omnivore/mini_kinetics" \
     --sunrgbd-data-path="/Users/yosuamichael/Downloads/datasets/SUN_RGBD" \
 
+python pl_train.py --batch-size=2 --workers=2 --device=cpu --output-dir="train_output" \
+    --imagenet-data-path="/Users/yosuamichael/Downloads/datasets/mini_omnivore/mini_imagenet" \
+    --kinetics-data-path="/Users/yosuamichael/Downloads/datasets/mini_omnivore/mini_kinetics" \
+    --sunrgbd-data-path="/Users/yosuamichael/Downloads/datasets/SUN_RGBD" \
+
 
 PYTHONPATH=:/data/home/yosuamichael/repos/torchmultimodal/examples/omnivore python \
     -u ~/script/run_with_submitit.py \
