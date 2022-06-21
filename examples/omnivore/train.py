@@ -4,6 +4,8 @@
 # - [P0] Able to run distributed [DONE]
 # - [P0] Refactor the dataset to separate file (and update sunrgbd class to not using manual json) [DONE?]
 # - [P0] Enable to resume checkpoint and do evaluation only [DONE?]
+# - [P1] Better logging using MetricLogger [DONE]
+# - [P1] Use mixed precision [DONE?]
 # - [P2] Enable using EMA during training
 #
 # NOTE: [DONE?] -> need more testing
@@ -20,7 +22,6 @@ from torchvision.transforms.functional import InterpolationMode
 import time
 import os
 import datetime
-import numpy as np
 
 import image_presets
 import video_presets
@@ -62,9 +63,10 @@ def get_single_data_loader_from_dataset(train_dataset, val_dataset, args):
         num_workers=args.workers,
         pin_memory=True,
         collate_fn=collate_fn,
+        drop_last=True,
     )
     val_data_loader = torch.utils.data.DataLoader(
-        val_dataset, batch_size=args.batch_size, sampler=test_sampler, num_workers=args.workers, pin_memory=True
+        val_dataset, batch_size=args.batch_size, sampler=test_sampler, num_workers=args.workers, pin_memory=True, drop_last=True,
     )
     return train_data_loader, val_data_loader
 
@@ -128,47 +130,63 @@ def get_omnivore_data_loader(args):
 
     return train_data_loader, val_data_loader
 
-def train_one_epoch(model, criterion, optimizer, data_loader, device, epoch, args):
+def train_one_epoch(model, criterion, optimizer, data_loader, device, epoch, args, scaler=None):
     model.train()
+    metric_logger = utils.MetricLogger(delimiter="  ")
+    metric_logger.add_meter("lr", utils.SmoothedValue(window_size=1, fmt="{value}"))
+    metric_logger.add_meter("img/s", utils.SmoothedValue(window_size=10, fmt="{value}"))
+
     data_loader.init_indices(epoch=epoch, shuffle=True)
-    acc1s, acc5s = [], []
-    for i, ((image, target), input_type) in enumerate(data_loader):
+    header = f"Epoch: [{epoch}]"
+    for i, ((image, target), input_type) in enumerate(metric_logger.log_every(data_loader, args.print_freq, header)):
+        start_time = time.time()
         image, target = image.to(device), target.to(device)
         output = model(image, input_type)
         loss = criterion(output, target)
         optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
+        if scaler is not None:
+            scaler.scale(loss).backward()
+            if args.clip_grad_norm is not None:
+                # we should unscale the gradients of optimizer's assigned params if do gradient clipping
+                scaler.unscale_(optimizer)
+                nn.utils.clip_grad_norm_(model.parameters(), args.clip_grad_norm)
+            scaler.step(optimizer)
+            scaler.update()
+        else:
+            loss.backward()
+            if args.clip_grad_norm is not None:
+                nn.utils.clip_grad_norm_(model.parameters(), args.clip_grad_norm)
+            optimizer.step()
 
         acc1, acc5 = utils.accuracy(output, target, topk=(1, 5))
-        acc1s.append(acc1.item())
-        acc5s.append(acc5.item())
-        if i % 200 == 0:
-            lprint(f"Train epoch {epoch}, batch_num {i}, input_type: {input_type}")
-            lprint(f"[Train #{epoch}] acc1: {np.mean(acc1s)}, acc5: {np.mean(acc5s)}")
-    lprint(f"[Train #{epoch}] acc1: {np.mean(acc1s)}, acc5: {np.mean(acc5s)}")
+        batch_size = image.shape[0]
+        metric_logger.update(loss=loss.item(), lr=optimizer.param_groups[0]["lr"])
+        metric_logger.meters[f"{input_type}_acc1"].update(acc1.item(), n=batch_size)
+        metric_logger.meters[f"{input_type}_acc5"].update(acc5.item(), n=batch_size)
+        metric_logger.meters["img/s"].update(batch_size / (time.time() - start_time))
 
-def evaluate(model, criterion, val_data_loader, device):
+def evaluate(model, criterion, val_data_loader, device, args):
     model.eval()
     val_data_loader.init_indices(epoch=0, shuffle=False)
-    with torch.inference_mode():
-        acc1s, acc5s = [], []
-        try:
-            for i, ((image, target), input_type) in enumerate(val_data_loader):
-                image = image.to(device, non_blocking=True)
-                target = target.to(device, non_blocking=True)
-                output = model(image, input_type)
-                loss = criterion(output, target)
-                acc1, acc5 = utils.accuracy(output, target, topk=(1, 5))
-                acc1s.append(acc1.item())
-                acc5s.append(acc5.item())
-                if i % 200 == 0:
-                    lprint(f"[Eval i={i}] acc1: {np.mean(acc1s)}, acc5: {np.mean(acc5s)}")
 
-            lprint(f"[Eval] acc1: {np.mean(acc1s)}, acc5: {np.mean(acc5s)}")
-        except Exception as e:
-            lprint(f"Error on i={i} with input_type={input_type}")
-            raise
+    metric_logger = utils.MetricLogger(delimiter="  ")
+    header = "Test: "
+    with torch.inference_mode():
+        for i, ((image, target), input_type) in enumerate(metric_logger.log_every(val_data_loader, args.print_freq, header)):
+            image = image.to(device, non_blocking=True)
+            target = target.to(device, non_blocking=True)
+            output = model(image, input_type)
+            loss = criterion(output, target)
+            acc1, acc5 = utils.accuracy(output, target, topk=(1, 5))
+            batch_size = image.shape[0]
+            metric_logger.update(loss=loss.item())
+            metric_logger.meters[f"{input_type}_acc1"].update(acc1.item(), n=batch_size)
+            metric_logger.meters[f"{input_type}_acc5"].update(acc5.item(), n=batch_size)
+
+    metric_logger.synchronize_between_processes()
+    print(f"{header} Image Acc@1 {metric_logger.image_acc1.global_avg:.3f} Image Acc@5 {metric_logger.image_acc5.global_avg:.3f}")
+    print(f"{header} Video Acc@1 {metric_logger.video_acc1.global_avg:.3f} Video Acc@5 {metric_logger.video_acc5.global_avg:.3f}")
+    print(f"{header} RGBD Acc@1 {metric_logger.rgbd_acc1.global_avg:.3f} RGBD Acc@5 {metric_logger.rgbd_acc5.global_avg:.3f}")
 
 
 
@@ -215,6 +233,8 @@ def main(args):
         momentum=args.momentum,
         weight_decay=args.weight_decay,
     )
+
+    scaler = torch.cuda.amp.GradScaler() if args.amp else None
     
     main_lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
         optimizer, T_max=args.epochs - args.lr_warmup_epochs, eta_min=args.lr_min
@@ -246,12 +266,14 @@ def main(args):
             optimizer.load_state_dict(checkpoint["optimizer"])
             lr_scheduler.load_state_dict(checkpoint["lr_scheduler"])
         args.start_epoch = checkpoint["epoch"] + 1
+        if scaler:
+            scaler.load_state_dict(checkpoint["scaler"])
 
     if args.test_only:
         # We disable the cudnn benchmarking because it can noticeably affect the accuracy
         torch.backends.cudnn.benchmark = False
         torch.backends.cudnn.deterministic = True
-        evaluate(model, criterion, val_data_loader, device=device)
+        evaluate(model, criterion, val_data_loader, device=device, args=args)
         return
 
     # Start training
@@ -259,9 +281,9 @@ def main(args):
     print("Start training")
     start_time = time.time()
     for epoch in range(args.epochs):
-        train_one_epoch(model, criterion, optimizer, train_data_loader, device, epoch, args)
+        train_one_epoch(model, criterion, optimizer, train_data_loader, device, epoch, args, scaler)
         lr_scheduler.step()
-        evaluate(model, criterion, val_data_loader, device=device)
+        evaluate(model, criterion, val_data_loader, device=device, args=args)
         if args.output_dir:
             checkpoint = {
                 "model": model_without_ddp.state_dict(),
@@ -270,6 +292,8 @@ def main(args):
                 "epoch": epoch,
                 "args": args,
             }
+            if scaler:
+                checkpoint["scaler"] = scaler.state_dict()
             utils.save_on_master(checkpoint, os.path.join(args.output_dir, f"model_{epoch}.pth"))
             utils.save_on_master(checkpoint, os.path.join(args.output_dir, "checkpoint.pth"))
 
@@ -355,6 +379,9 @@ def get_args_parser(add_help=True):
         help="Only test the model",
         action="store_true",
     )
+    parser.add_argument("--print-freq", default=10, type=int, help="print frequency")
+    parser.add_argument("--amp", action="store_true", help="Use torch.cuda.amp for mixed precision training")
+    parser.add_argument("--clip-grad-norm", default=None, type=float, help="the maximum gradient norm (default None)")
     return parser
 
 if __name__ == "__main__":

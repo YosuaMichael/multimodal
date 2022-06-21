@@ -14,16 +14,6 @@ def lprint(*x):
     print(f"[{datetime.datetime.now()}]", *x)
 
 def get_single_data_loader_from_dataset(train_dataset, val_dataset, args):  
-    # if args.distributed:
-    #    if hasattr(args, "ra_sampler") and args.ra_sampler:
-    #        train_sampler = RASampler(train_dataset, shuffle=True, repetitions=args.ra_reps)
-    #    else:
-    #        train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset)
-    #    test_sampler = torch.utils.data.distributed.DistributedSampler(val_dataset, shuffle=False)
-    #else:
-    train_sampler = torch.utils.data.RandomSampler(train_dataset)
-    test_sampler = torch.utils.data.SequentialSampler(val_dataset)
-
     collate_fn = None
     num_classes = len(train_dataset.classes)
     mixup_transforms = []
@@ -38,13 +28,14 @@ def get_single_data_loader_from_dataset(train_dataset, val_dataset, args):
     train_data_loader = torch.utils.data.DataLoader(
         train_dataset,
         batch_size=args.batch_size,
-        sampler=train_sampler,
+        sampler=None,
         num_workers=args.workers,
         pin_memory=True,
         collate_fn=collate_fn,
+        drop_last=True,
     )
     val_data_loader = torch.utils.data.DataLoader(
-        val_dataset, batch_size=args.batch_size, sampler=test_sampler, num_workers=args.workers, pin_memory=True
+        val_dataset, batch_size=args.batch_size, sampler=None, num_workers=args.workers, pin_memory=True, drop_last=True,
     )
     return train_data_loader, val_data_loader
 
@@ -109,11 +100,27 @@ def get_omnivore_data_loader(args):
     return train_data_loader, val_data_loader
 
 
+class DataLoaderCb(pl.Callback):
+    def __init__(self, train_data_loader, val_data_loader):
+        self.train_data_loader = train_data_loader
+        self.val_data_loader = val_data_loader
+
+    def on_train_epoch_start(self, trainer, pl_module):
+        self.train_data_loader.init_indices(epoch=pl_module.current_epoch, shuffle=True)
+
+    def on_validation_epoch_start(self, trainer, pl_module):
+        self.val_data_loader.init_indices(epoch=0, shuffle=False)
+
+
 def main(args):
     model = pl_model.OmnivoreLightningModule(args)
 
     train_data_loader, val_data_loader = get_omnivore_data_loader(args)
-    trainer = pl.Trainer()
+    if args.device == "cpu":
+        trainer = pl.Trainer()
+    elif args.device == "cuda":
+        trainer = pl.Trainer(accelerator="gpu")
+    trainer.callbacks.append(DataLoaderCb(train_data_loader, val_data_loader))
 
     trainer.fit(model, train_data_loader, val_data_loader)
 

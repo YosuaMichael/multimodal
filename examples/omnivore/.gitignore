@@ -1,2 +1,4 @@
 library.jpg
 imagenet_class_index.json
+
+lightning_logs/*
