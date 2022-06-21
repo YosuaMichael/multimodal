@@ -39,6 +39,36 @@ def get_single_data_loader_from_dataset(train_dataset, val_dataset, args):
     )
     return train_data_loader, val_data_loader
 
+def _get_cache_path(filepath):
+    import hashlib
+
+    h = hashlib.sha1(filepath.encode()).hexdigest()
+    cache_path = os.path.join("~", ".torch", "vision", "datasets", "kinetics", h[:10] + ".pt")
+    cache_path = os.path.expanduser(cache_path)
+    return cache_path
+
+def get_kinetics_dataset(kinetics_path, split, transform, args):
+    data_dir = os.path.join(kinetics_path, split)
+    cache_path = _get_cache_path(data_dir)
+    if args.cache_video_dataset and os.path.exists(cache_path):
+        print(f"Loading {split} dataset from {cache_path}")
+        dataset, _ = torch.load(cache_path)
+        dataset.transform = transform
+    else:
+        if args.distributed:
+            print("It is recommended to pre-compute the dataset cache on a single-gpu first, it will be faster!")
+        dataset = datasets.OmnivoreKinetics(
+            kinetics_path,
+            num_classes="400", extensions=("avi", "mp4"), output_format="TCHW",
+            frames_per_clip=32, frame_rate=16, step_between_clips=32, 
+            split=split, transform=transform
+        )
+        if args.cache_video_dataset:
+            print(f"Saving {split} dataset to {cache_path}")
+            utils.mkdir(os.path.dirname(cache_path))
+            utils.save_on_master((dataset, data_dir), cache_path)
+    return dataset
+
 def get_omnivore_data_loader(args):
     imagenet_path = args.imagenet_data_path
     kinetics_path = args.kinetics_data_path
@@ -62,16 +92,11 @@ def get_omnivore_data_loader(args):
     video_train_preset = video_presets.VideoClassificationPresetTrain(crop_size=train_crop_size, resize_size=train_resize_size, )
     video_val_preset = video_presets.VideoClassificationPresetEval(crop_size=val_crop_size, resize_size=val_resize_size, )
 
-    video_train_dataset = datasets.OmnivoreKinetics(
-        f"{kinetics_path}", 
-        frames_per_clip=32, frame_rate=16, step_between_clips=32, 
-        split="train", transform= video_train_preset
-    )
-    video_val_dataset = datasets.OmnivoreKinetics(
-        f"{kinetics_path}", 
-        frames_per_clip=32, frame_rate=16, step_between_clips=32, 
-        split="val", transform= video_val_preset
-    )
+    start_time = time.time()
+    print("Start getting video dataset")
+    video_train_dataset = get_kinetics_dataset(kinetics_path, split="train", transform=video_train_preset, args=args)
+    video_val_dataset = get_kinetics_dataset(kinetics_path, split="val", transform=video_val_preset, args=args)
+    print(f"Took {time.time() - start_time} seconds to get video dataset")
     
     video_train_data_loader, video_val_data_loader = get_single_data_loader_from_dataset(video_train_dataset, video_val_dataset, args)
     
@@ -198,6 +223,12 @@ def get_args_parser(add_help=True):
         "--test-only",
         dest="test_only",
         help="Only test the model",
+        action="store_true",
+    )
+    parser.add_argument(
+        "--cache-video-dataset",
+        dest="cache_video_dataset",
+        help="Cache the video datasets for quicker initialization. It also serializes the transforms",
         action="store_true",
     )
     return parser
