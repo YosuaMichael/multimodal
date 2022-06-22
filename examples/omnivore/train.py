@@ -42,31 +42,40 @@ def lprint(*x):
     print(f"[{datetime.datetime.now()}]", *x)
 
 
-def get_single_data_loader_from_dataset(train_dataset, val_dataset, args):
-    video_train_sampler = video_samplers.RandomClipSampler(
-        train_dataset.video_clips, args.clips_per_video
-    )
-    video_val_sampler = video_samplers.UniformClipSampler(
-        val_dataset.video_clips, args.clips_per_video
-    )
-    if args.distributed:
-        if hasattr(args, "ra_sampler") and args.ra_sampler:
-            train_sampler = RASampler(
-                train_dataset, shuffle=True, repetitions=args.ra_reps
+def get_sampler(train_dataset, val_dataset, dataset_name, args):
+    if dataset_name == "kinetics":
+        train_sampler = video_samplers.RandomClipSampler(
+            train_dataset.video_clips, args.train_clips_per_video
+        )
+        val_sampler = video_samplers.UniformClipSampler(
+            val_dataset.video_clips, args.val_clips_per_video
+        )
+        if args.distributed:
+            train_sampler = video_samplers.DistributedSampler(train_sampler)
+            val_sampler = video_samplers.DistributedSampler(val_sampler)
+    else:
+        if args.distributed:
+            if hasattr(args, "ra_sampler") and args.ra_sampler:
+                train_sampler = RASampler(
+                    train_dataset, shuffle=True, repetitions=args.ra_reps
+                )
+            else:
+                train_sampler = torch.utils.data.distributed.DistributedSampler(
+                    train_dataset
+                )
+            val_sampler = torch.utils.data.distributed.DistributedSampler(
+                val_dataset, shuffle=False
             )
         else:
-            train_sampler = torch.utils.data.distributed.DistributedSampler(
-                train_dataset
-            )
-        test_sampler = torch.utils.data.distributed.DistributedSampler(
-            val_dataset, shuffle=False
-        )
-        video_train_sampler = video_samplers.DistributedSampler(video_train_sampler)
-        video_val_sampler = video_samplers.DistributedSampler(video_val_sampler)
-    else:
-        train_sampler = torch.utils.data.RandomSampler(train_dataset)
-        test_sampler = torch.utils.data.SequentialSampler(val_dataset)
+            train_sampler = torch.utils.data.RandomSampler(train_dataset)
+            val_sampler = torch.utils.data.SequentialSampler(val_dataset)
+    return train_sampler, val_sampler
 
+
+def get_single_data_loader_from_dataset(train_dataset, val_dataset, dataset_name, args):
+    train_sampler, val_sampler = get_sampler(
+        train_dataset, val_dataset, dataset_name, args
+    )
     collate_fn = None
     num_classes = len(train_dataset.classes)
     mixup_transforms = []
@@ -94,7 +103,7 @@ def get_single_data_loader_from_dataset(train_dataset, val_dataset, args):
     val_data_loader = torch.utils.data.DataLoader(
         val_dataset,
         batch_size=args.batch_size,
-        sampler=test_sampler,
+        sampler=val_sampler,
         num_workers=args.workers,
         pin_memory=True,
         drop_last=True,
@@ -107,13 +116,21 @@ def _get_cache_path(filepath):
 
     h = hashlib.sha1(filepath.encode()).hexdigest()
     cache_path = os.path.join(
-        "~", ".torch", "vision", "datasets", "kinetics", h[:10] + ".pt"
+        "~", ".torch", "torchmultimodal", "omnivore", "kinetics", h[:10] + ".pt"
     )
     cache_path = os.path.expanduser(cache_path)
     return cache_path
 
 
-def get_kinetics_dataset(kinetics_path, split, transform, args):
+def get_kinetics_dataset(
+    kinetics_path,
+    split,
+    transform,
+    step_between_clips,
+    args,
+    frame_rate=16,
+    frames_per_clip=32,
+):
     data_dir = os.path.join(kinetics_path, split)
     cache_path = _get_cache_path(data_dir)
     if args.cache_video_dataset and os.path.exists(cache_path):
@@ -130,11 +147,12 @@ def get_kinetics_dataset(kinetics_path, split, transform, args):
             num_classes="400",
             extensions=("avi", "mp4"),
             output_format="TCHW",
-            frames_per_clip=32,
-            frame_rate=16,
-            step_between_clips=32,
+            frames_per_clip=frames_per_clip,
+            frame_rate=frame_rate,
+            step_between_clips=step_between_clips,
             split=split,
             transform=transform,
+            num_workers=args.kinetics_workers,
         )
         if args.cache_video_dataset:
             print(f"Saving {split} dataset to {cache_path}")
@@ -175,7 +193,7 @@ def get_omnivore_data_loader(args):
         imagenet_train_data_loader,
         imagenet_val_data_loader,
     ) = get_single_data_loader_from_dataset(
-        imagenet_train_dataset, imagenet_val_dataset, args
+        imagenet_train_dataset, imagenet_val_dataset, "imagenet", args
     )
     lprint("Finish getting imagenet dataset")
 
@@ -192,10 +210,18 @@ def get_omnivore_data_loader(args):
     start_time = time.time()
     lprint("Start getting video dataset")
     video_train_dataset = get_kinetics_dataset(
-        kinetics_path, split="train", transform=video_train_preset, args=args
+        kinetics_path,
+        split="train",
+        transform=video_train_preset,
+        step_between_clips=1,
+        args=args,
     )
     video_val_dataset = get_kinetics_dataset(
-        kinetics_path, split="val", transform=video_val_preset, args=args
+        kinetics_path,
+        split="val",
+        transform=video_val_preset,
+        step_between_clips=1,
+        args=args,
     )
     lprint(f"Took {time.time() - start_time} seconds to get video dataset")
 
@@ -203,7 +229,7 @@ def get_omnivore_data_loader(args):
         video_train_data_loader,
         video_val_data_loader,
     ) = get_single_data_loader_from_dataset(
-        video_train_dataset, video_val_dataset, args
+        video_train_dataset, video_val_dataset, "kinetics", args
     )
 
     # Get sunrgbd data
@@ -228,7 +254,7 @@ def get_omnivore_data_loader(args):
         depth_train_data_loader,
         depth_val_data_loader,
     ) = get_single_data_loader_from_dataset(
-        depth_train_dataset, depth_val_dataset, args
+        depth_train_dataset, depth_val_dataset, "sunrgbd", args
     )
 
     train_data_loader = datasets.ConcatIterable(
@@ -499,7 +525,7 @@ def get_args_parser(add_help=True):
         default=1,
         type=int,
         metavar="N",
-        help="number of data loading workers (default: 16)",
+        help="number of data loading workers (default: 1)",
     )
     parser.add_argument(
         "--momentum", default=0.9, type=float, metavar="M", help="momentum"
@@ -630,11 +656,24 @@ def get_args_parser(add_help=True):
         action="store_true",
     )
     parser.add_argument(
-        "--clips-per-video",
-        default=5,
+        "--train-clips-per-video",
+        default=1,
         type=int,
         metavar="N",
-        help="maximum number of clips per video to consider",
+        help="maximum number of clips per video to consider during training",
+    )
+    parser.add_argument(
+        "--val-clips-per-video",
+        default=4,
+        type=int,
+        metavar="N",
+        help="maximum number of clips per video to consider during validation",
+    )
+    parser.add_argument(
+        "--kinetics-workers",
+        default=4,
+        type=int,
+        help="number of kinetics dataset reader workers (default=4)",
     )
     return parser
 
