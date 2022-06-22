@@ -1,10 +1,17 @@
-from typing import Callable, Optional, Tuple
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+# All rights reserved.
+#
+# This source code is licensed under the BSD-style license found in the
+# LICENSE file in the root directory of this source tree.
 
+from typing import Callable, Optional, List
+
+import torch
 from torch import nn
 from torchmultimodal.architectures.omnivore import OmnivoreArchitecture
 from torchmultimodal.modules.encoders.swin_transformer_3d_encoder import (
     PatchEmbed3d,
-    SwinTransformer3dEncoder,
+    SwinTransformer3d,
 )
 
 
@@ -48,7 +55,7 @@ class PatchEmbedOmnivore(nn.Module):
 
     def __init__(
         self,
-        patch_size: Tuple[int, int, int] = (2, 4, 4),
+        patch_size: List[int],
         embed_dim: int = 96,
         norm_layer: Optional[Callable[..., nn.Module]] = None,
     ):
@@ -66,7 +73,7 @@ class PatchEmbedOmnivore(nn.Module):
             norm_layer=norm_layer,
         )
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         # x: B C D H W
         # Note: D here represent time
         assert x.ndim == 5
@@ -81,16 +88,26 @@ class PatchEmbedOmnivore(nn.Module):
         return x
 
 
-def omnivore_swin_t() -> nn.Module:
-    encoder = SwinTransformer3dEncoder(
-        patch_size=(2, 4, 4),
+def _omnivore_swin_t_encoder() -> SwinTransformer3d:
+    encoder = SwinTransformer3d(
+        patch_size=[2, 4, 4],
         embed_dim=96,
         depths=[2, 2, 6, 2],
         num_heads=[3, 6, 12, 24],
-        window_size=(8, 7, 7),
+        window_size=[8, 7, 7],
         stochastic_depth_prob=0.2,
         norm_layer=nn.LayerNorm,
         patch_embed=PatchEmbedOmnivore,
+        num_classes=None,
     )
+    return encoder
+
+
+# TODO: add pretrained weight capability
+def omnivore_swin_t(encoder_only=False) -> nn.Module:
+    encoder = _omnivore_swin_t_encoder()
+    if encoder_only:
+        return encoder
+
     heads = _multimodal_head(input_dim=encoder.num_features)
     return OmnivoreArchitecture(encoder, heads)
