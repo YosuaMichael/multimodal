@@ -382,12 +382,23 @@ def main(args):
     )
 
     opt_name = args.opt.lower()
-    optimizer = torch.optim.SGD(
-        parameters,
-        lr=args.lr,
-        momentum=args.momentum,
-        weight_decay=args.weight_decay,
-    )
+    if opt_name.startswith("sgd"):
+        optimizer = torch.optim.SGD(
+            parameters,
+            lr=args.lr,
+            momentum=args.momentum,
+            weight_decay=args.weight_decay,
+        )
+    elif opt_name == "adamw":
+        optimizer = torch.optim.AdamW(
+            parameters,
+            lr=args.lr,
+            weight_decay=args.weight_decay,
+        )
+    else:
+        raise RuntimeError(
+            f"Invalid optimizer {args.opt}. Only SGD, RMSprop and AdamW are supported."
+        )
 
     scaler = torch.cuda.amp.GradScaler() if args.amp else None
 
@@ -446,7 +457,8 @@ def main(args):
             model, criterion, optimizer, train_data_loader, device, epoch, args, scaler
         )
         lr_scheduler.step()
-        evaluate(model, criterion, val_data_loader, device=device, args=args)
+        if epoch % args.num_epoch_per_eval:
+            evaluate(model, criterion, val_data_loader, device=device, args=args)
         if args.output_dir:
             checkpoint = {
                 "model": model_without_ddp.state_dict(),
@@ -659,14 +671,12 @@ def get_args_parser(add_help=True):
         "--train-clips-per-video",
         default=1,
         type=int,
-        metavar="N",
         help="maximum number of clips per video to consider during training",
     )
     parser.add_argument(
         "--val-clips-per-video",
         default=4,
         type=int,
-        metavar="N",
         help="maximum number of clips per video to consider during validation",
     )
     parser.add_argument(
@@ -674,6 +684,12 @@ def get_args_parser(add_help=True):
         default=4,
         type=int,
         help="number of kinetics dataset reader workers (default=4)",
+    )
+    parser.add_argument(
+        "--num-epoch-per-eval",
+        default=5,
+        type=int,
+        help="Number of epoch between each evaluation on validation dataset",
     )
     return parser
 
