@@ -28,7 +28,9 @@ class Unsqueeze(torch.nn.Module):
         return x.unsqueeze(self.pos)
 
 
-# From original implementation https://www.internalfb.com/code/fbsource/[f1a98f41bcce7ee621f0248a6e0235a3e3dea628]/fbcode/deeplearning/projects/omnivore/vissl/data/ssl_transforms/depth_transforms.py?lines=13
+# From original implementation
+# https://www.internalfb.com/code/fbsource/[f1a98f41bcce7ee621f0248a6e0235a3e3dea628]/
+# fbcode/deeplearning/projects/omnivore/vissl/data/ssl_transforms/depth_transforms.py?lines=13
 class DropChannels(nn.Module):
     """
     Drops Channels with predefined probability values.
@@ -102,8 +104,9 @@ class DropChannels(nn.Module):
         return x
 
 
-# From original implementation https://www.internalfb.com/code/fbsource/[f1a98f41bcce7ee621f0248a6e0235a3e3dea628]/fbcode/deeplearning/projects/omnivore/vissl/data/ssl_transforms/depth_normalize.py
-class RGBToFloatAndDepthNorm(nn.Module):
+# From original implementation:
+# https://github.com/facebookresearch/omnivore/blob/main/omnivore/transforms.py#L16
+class DepthNorm(nn.Module):
     """
     Normalize the depth channel: in an RGBD input of shape (4, H, W),
     only the last channel is modified.
@@ -124,25 +127,21 @@ class RGBToFloatAndDepthNorm(nn.Module):
             clamp_max (bool): Whether to clamp to max_depth or to divide by max_depth
         """
         super().__init__()
+        if max_depth < 0.0:
+            raise ValueError("max_depth must be > 0; got %.2f" % max_depth)
         self.max_depth = max_depth
         self.clamp_max_before_scale = clamp_max_before_scale
         self.min_depth = min_depth
 
     def forward(self, image: torch.Tensor):
-        C, H, W = image.shape
-        if C != 4:
+        c, h, w = image.shape
+        if c != 4:
             err_msg = (
                 f"This transform is for 4 channel RGBD input only; got {image.shape}"
             )
             raise ValueError(err_msg)
-
-        assert image.dtype == torch.uint8
-
-        color_img = image[:3, ...].float()  # (3, H, W)
-        depth_img = image[3:4, ...].float()  # (1, H, W)
-
-        # Convert color_img to float with range [0, 1]
-        color_img /= 255
+        color_img = image[:3, ...]  # (3, H, W)
+        depth_img = image[3:4, ...]  # (1, H, W)
 
         # Clamp to 0.0 to prevent negative depth values
         depth_img = depth_img.clamp(min=self.min_depth)
@@ -168,7 +167,10 @@ class DepthClassificationPresetTrain:
         hflip_prob=0.5,
         random_erase_prob=0.0,
     ):
-        trans = [transforms.RandomResizedCrop(crop_size, interpolation=interpolation)]
+        trans = [
+            DepthNorm(max_depth=75, clamp_max_before_scale=True),
+            transforms.RandomResizedCrop(crop_size, interpolation=interpolation),
+        ]
 
         if hflip_prob > 0:
             trans.append(transforms.RandomHorizontalFlip(hflip_prob))
@@ -178,7 +180,6 @@ class DepthClassificationPresetTrain:
                 RandAugment3d(interpolation=interpolation, num_ops=1),
                 ColorJitter3d(brightness=0.4, contrast=0.4, saturation=0.4, hue=0.4),
                 # transforms.ConvertImageDtype(torch.float),
-                RGBToFloatAndDepthNorm(max_depth=75, clamp_max_before_scale=True),
             ]
         )
         if random_erase_prob > 0:
@@ -214,11 +215,11 @@ class DepthClassificationPresetEval:
 
         self.transforms = transforms.Compose(
             [
+                DepthNorm(max_depth=75, clamp_max_before_scale=True),
                 transforms.Resize(resize_size, interpolation=interpolation),
                 transforms.CenterCrop(crop_size),
-                RGBToFloatAndDepthNorm(max_depth=75, clamp_max_before_scale=True),
                 # transforms.ConvertImageDtype(torch.float),
-                # transforms.Normalize(mean=mean, std=std),
+                transforms.Normalize(mean=mean, std=std),
                 # For omnivore to make the depth image look like video with C D H W layout
                 Unsqueeze(pos=1),
             ]

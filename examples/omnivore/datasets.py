@@ -7,11 +7,11 @@
 import os
 from pathlib import Path
 
-import numpy as np
 import PIL
 import scipy.io
 import torch
 import torchvision
+import torchvision.transforms as T
 from torchvision.datasets.vision import VisionDataset
 
 
@@ -87,17 +87,17 @@ class OmnivoreSunRgbdDatasets(VisionDataset):
         rgb_dir = os.path.join(image_dir, "image")
         rgb_path = os.path.join(rgb_dir, os.listdir(rgb_dir)[0])
         img_rgb = PIL.Image.open(rgb_path)
-        arr_rgb = np.asarray(img_rgb)
+        tensor_rgb = T.ToTensor()(img_rgb)
 
         # Using depth_bfx, but maybe can also consider just using depth
         depth_dir = os.path.join(image_dir, "depth_bfx")
         depth_path = os.path.join(depth_dir, os.listdir(depth_dir)[0])
         img_d = PIL.Image.open(depth_path)
         if img_d.mode == "I":
-            arr_d = (np.asarray(img_d) * 255.99999 / 2 ** 16).astype(np.uint8)
+            tensor_d = T.ToTensor()(img_d) * 255.99999 / 2**16
 
-        arr_rgbd = np.dstack((arr_rgb, arr_d))
-        return arr_rgbd
+        tensor_rgbd = torch.cat((tensor_rgb, tensor_d), dim=0)
+        return tensor_rgbd
 
     def _get_sunrgbd_scene_class(self, image_dir):
         with open(os.path.join(image_dir, "scene.txt"), "r") as fin:
@@ -107,8 +107,7 @@ class OmnivoreSunRgbdDatasets(VisionDataset):
     def __getitem__(self, idx):
         # return tuple of image (H W C==4) and scene class index
         image_dir = self.image_dirs[idx]
-        x_rgbd = torch.tensor(self._read_sunrgbd_image(image_dir), dtype=torch.uint8)
-        x_rgbd = x_rgbd.permute(2, 0, 1)  # H W C -> C H W
+        x_rgbd = self._read_sunrgbd_image(image_dir)
         scene_class = self._get_sunrgbd_scene_class(image_dir)
         scene_idx = self.class_to_idx[scene_class]
 
