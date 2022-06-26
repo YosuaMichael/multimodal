@@ -31,6 +31,25 @@ class OmnivoreSunRgbdDatasets(VisionDataset):
             print(f"data_dir: {self._data_dir}\nmeta_dir: {self._meta_dir}")
             raise RuntimeError("Dataset not found.")
 
+        # Get the param from https://github.com/facebookresearch/omnivore/issues/12
+        self.sensor_to_params = {
+            "kv1": {
+                "baseline": 0.075,
+            },
+            "kv1_b": {
+                "baseline": 0.075,
+            },
+            "kv2": {
+                "baseline": 0.075,
+            },
+            "realsense": {
+                "baseline": 0.095,
+            },
+            "xtion": {
+                "baseline": 0.095,  # guessed based on length of 18cm for ASUS xtion v1
+            },
+        }
+
         self.classes = [
             "bathroom",
             "bedroom",
@@ -83,18 +102,31 @@ class OmnivoreSunRgbdDatasets(VisionDataset):
     def __len__(self):
         return len(self.image_dirs)
 
+    def _get_disparity_tensor(self, image_dir):
+        # Using depth_bfx, but maybe can also consider just using depth
+        image_dir = Path(image_dir)
+        depth_dir = image_dir / "depth_bfx"
+        intrinsics_file = image_dir / "intrinsics.txt"
+        depth_path = depth_dir / os.listdir(depth_dir)[0]
+
+        sensor_type = image_dir.relative_to(self._data_dir).parts[0]
+        baseline = self.sensor_to_params[sensor_type]["baseline"]
+        with open(intrinsics_file, "r") as fin:
+            lines = fin.readlines()
+            focal_length = float(lines[0].strip().split()[0])
+
+        img_depth = PIL.Image.open(depth_path)
+        tensor_depth = T.ToTensor()(img_depth)
+        tensor_disparity = baseline * focal_length / (tensor_depth / 1000.0)
+        return tensor_disparity
+
     def _read_sunrgbd_image(self, image_dir):
         rgb_dir = os.path.join(image_dir, "image")
         rgb_path = os.path.join(rgb_dir, os.listdir(rgb_dir)[0])
         img_rgb = PIL.Image.open(rgb_path)
         tensor_rgb = T.ToTensor()(img_rgb)
 
-        # Using depth_bfx, but maybe can also consider just using depth
-        depth_dir = os.path.join(image_dir, "depth_bfx")
-        depth_path = os.path.join(depth_dir, os.listdir(depth_dir)[0])
-        img_d = PIL.Image.open(depth_path)
-        if img_d.mode == "I":
-            tensor_d = T.ToTensor()(img_d) * 255.99999 / 2**16
+        tensor_d = self._get_disparity_tensor(image_dir)
 
         tensor_rgbd = torch.cat((tensor_rgb, tensor_d), dim=0)
         return tensor_rgbd

@@ -161,14 +161,15 @@ class DepthClassificationPresetTrain:
         self,
         *,
         crop_size,
-        mean=(0.485, 0.456, 0.406, 0.8049),
-        std=(0.229, 0.224, 0.225, 0.2116),
+        max_depth=75,
+        mean=(0.485, 0.456, 0.406, 0.0418),
+        std=(0.229, 0.224, 0.225, 0.0295),
         interpolation=InterpolationMode.BILINEAR,
         hflip_prob=0.5,
         random_erase_prob=0.0,
     ):
         trans = [
-            DepthNorm(max_depth=75, clamp_max_before_scale=True),
+            DepthNorm(max_depth=max_depth, clamp_max_before_scale=True),
             transforms.RandomResizedCrop(crop_size, interpolation=interpolation),
         ]
 
@@ -179,7 +180,6 @@ class DepthClassificationPresetTrain:
             [
                 RandAugment3d(interpolation=interpolation, num_ops=1),
                 ColorJitter3d(brightness=0.4, contrast=0.4, saturation=0.4, hue=0.4),
-                # transforms.ConvertImageDtype(torch.float),
             ]
         )
         if random_erase_prob > 0:
@@ -208,17 +208,17 @@ class DepthClassificationPresetEval:
         *,
         crop_size,
         resize_size=256,
-        mean=(0.485, 0.456, 0.406, 0.8049),
-        std=(0.229, 0.224, 0.225, 0.2116),
+        max_depth=75,
+        mean=(0.485, 0.456, 0.406, 0.0418),
+        std=(0.229, 0.224, 0.225, 0.0295),
         interpolation=InterpolationMode.BILINEAR,
     ):
 
         self.transforms = transforms.Compose(
             [
-                DepthNorm(max_depth=75, clamp_max_before_scale=True),
+                DepthNorm(max_depth=max_depth, clamp_max_before_scale=True),
                 transforms.Resize(resize_size, interpolation=interpolation),
                 transforms.CenterCrop(crop_size),
-                # transforms.ConvertImageDtype(torch.float),
                 transforms.Normalize(mean=mean, std=std),
                 # For omnivore to make the depth image look like video with C D H W layout
                 Unsqueeze(pos=1),

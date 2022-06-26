@@ -91,11 +91,15 @@ def get_single_data_loader_from_dataset(train_dataset, val_dataset, dataset_name
         mixupcutmix = torchvision.transforms.RandomChoice(mixup_transforms)
         collate_fn = lambda batch: mixupcutmix(*default_collate(batch))  # noqa: E731
 
+    # Have extra 3 workers for kinetics
+    num_workers = args.workers
+    if dataset_name == "kinetics":
+        num_workers += 6
     train_data_loader = torch.utils.data.DataLoader(
         train_dataset,
         batch_size=args.batch_size,
         sampler=train_sampler,
-        num_workers=args.workers,
+        num_workers=num_workers,
         pin_memory=True,
         collate_fn=collate_fn,
         drop_last=True,
@@ -104,7 +108,7 @@ def get_single_data_loader_from_dataset(train_dataset, val_dataset, dataset_name
         val_dataset,
         batch_size=args.batch_size,
         sampler=val_sampler,
-        num_workers=args.workers,
+        num_workers=num_workers,
         pin_memory=True,
         drop_last=True,
     )
@@ -237,10 +241,16 @@ def get_omnivore_data_loader(args):
         crop_size=train_crop_size,
         interpolation=InterpolationMode.NEAREST,
         random_erase_prob=0.25,
+        max_depth=75.0,
+        mean=(0.485, 0.456, 0.406, 0.0418),
+        std=(0.229, 0.224, 0.225, 0.0295),
     )
     depth_val_preset = depth_presets.DepthClassificationPresetEval(
         crop_size=val_crop_size,
         interpolation=InterpolationMode.NEAREST,
+        max_depth=75.0,
+        mean=(0.485, 0.456, 0.406, 0.0418),
+        std=(0.229, 0.224, 0.225, 0.0295),
     )
 
     depth_train_dataset = datasets.OmnivoreSunRgbdDatasets(
@@ -260,13 +270,13 @@ def get_omnivore_data_loader(args):
     train_data_loader = datasets.ConcatIterable(
         [imagenet_train_data_loader, video_train_data_loader, depth_train_data_loader],
         ["image", "video", "rgbd"],
-        [1, 1, 10],
+        args.train_data_sampling_factor,
     )
 
     val_data_loader = datasets.ConcatIterable(
         [imagenet_val_data_loader, video_val_data_loader, depth_val_data_loader],
         ["image", "video", "rgbd"],
-        [1, 1, 1],
+        args.val_data_sampling_factor,
     )
 
     return train_data_loader, val_data_loader
@@ -333,15 +343,24 @@ def evaluate(model, criterion, val_data_loader, device, args):
             metric_logger.meters[f"{input_type}_acc5"].update(acc5.item(), n=batch_size)
 
     metric_logger.synchronize_between_processes()
-    print(
-        f"{header} Image Acc@1 {metric_logger.image_acc1.global_avg:.3f} Image Acc@5 {metric_logger.image_acc5.global_avg:.3f}"
-    )
-    print(
-        f"{header} Video Acc@1 {metric_logger.video_acc1.global_avg:.3f} Video Acc@5 {metric_logger.video_acc5.global_avg:.3f}"
-    )
-    print(
-        f"{header} RGBD Acc@1 {metric_logger.rgbd_acc1.global_avg:.3f} RGBD Acc@5 {metric_logger.rgbd_acc5.global_avg:.3f}"
-    )
+    try:
+        print(
+            f"{header} Image Acc@1 {metric_logger.image_acc1.global_avg:.3f} Image Acc@5 {metric_logger.image_acc5.global_avg:.3f}"
+        )
+    except Exception:
+        pass
+    try:
+        print(
+            f"{header} Video Acc@1 {metric_logger.video_acc1.global_avg:.3f} Video Acc@5 {metric_logger.video_acc5.global_avg:.3f}"
+        )
+    except Exception:
+        pass
+    try:
+        print(
+            f"{header} RGBD Acc@1 {metric_logger.rgbd_acc1.global_avg:.3f} RGBD Acc@5 {metric_logger.rgbd_acc5.global_avg:.3f}"
+        )
+    except Exception:
+        pass
 
 
 def main(args):
@@ -437,7 +456,8 @@ def main(args):
         if not args.test_only:
             optimizer.load_state_dict(checkpoint["optimizer"])
             lr_scheduler.load_state_dict(checkpoint["lr_scheduler"])
-        args.start_epoch = checkpoint["epoch"] + 1
+        if "epoch" in checkpoint:
+            args.start_epoch = checkpoint["epoch"] + 1
         if scaler:
             scaler.load_state_dict(checkpoint["scaler"])
 
@@ -690,6 +710,18 @@ def get_args_parser(add_help=True):
         default=5,
         type=int,
         help="Number of epoch between each evaluation on validation dataset",
+    )
+    parser.add_argument(
+        "--val-data-sampling-factor",
+        default=[1.0, 1.0, 1.0],
+        type=float,
+        nargs="+",
+    )
+    parser.add_argument(
+        "--train-data-sampling-factor",
+        default=[1.0, 1.0, 10.0],
+        type=float,
+        nargs="+",
     )
     return parser
 
