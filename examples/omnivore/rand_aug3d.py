@@ -166,7 +166,7 @@ class RandAugment3d(torch.nn.Module):
                 8 - (torch.arange(num_bins) / ((num_bins - 1) / 4)).round().int(),
                 False,
             ),
-            "Solarize": (torch.linspace(255.0, 0.0, num_bins), False),
+            "Solarize": (torch.linspace(256.0, 0.0, num_bins), False),
             "AutoContrast": (torch.tensor(0.0), False),
             "Equalize": (torch.tensor(0.0), False),
         }
