@@ -82,13 +82,21 @@ def _apply_op(
     elif op_name == "Sharpness":
         img = F.adjust_sharpness(img, 1.0 + magnitude)
     elif op_name == "Posterize":
+        # The tensor dtype must be torch.uint8
+        # and values are expected to be in [0, 255]
+        img = (img * 255.9999).to(dtype=torch.uint8)
         img = F.posterize(img, int(magnitude))
+        img = (img / 255.9999).to(dtype=torch.float32)
     elif op_name == "Solarize":
         img = F.solarize(img, magnitude)
     elif op_name == "AutoContrast":
         img = F.autocontrast(img)
     elif op_name == "Equalize":
+        # The tensor dtype must be torch.uint8
+        # and values are expected to be in [0, 255]
+        img = (img * 255.9999).to(dtype=torch.uint8)
         img = F.equalize(img)
+        img = (img / 255.9999).to(dtype=torch.float32)
     elif op_name == "Invert":
         img = F.invert(img)
     elif op_name == "Identity":
@@ -166,7 +174,7 @@ class RandAugment3d(torch.nn.Module):
                 8 - (torch.arange(num_bins) / ((num_bins - 1) / 4)).round().int(),
                 False,
             ),
-            "Solarize": (torch.linspace(256.0, 0.0, num_bins), False),
+            # "Solarize": (torch.linspace(256.0, 0.0, num_bins), False),
             "AutoContrast": (torch.tensor(0.0), False),
             "Equalize": (torch.tensor(0.0), False),
         }

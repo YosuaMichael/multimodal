@@ -1,13 +1,6 @@
-# Copyright (c) Meta Platforms, Inc. and affiliates.
-# All rights reserved.
-#
-# This source code is licensed under the BSD-style license found in the
-# LICENSE file in the root directory of this source tree.
-
 import torch
 from torchvision.transforms import autoaugment, transforms
 from torchvision.transforms.functional import InterpolationMode
-
 
 class Unsqueeze(torch.nn.Module):
     def __init__(self, pos=0):
@@ -17,8 +10,7 @@ class Unsqueeze(torch.nn.Module):
     def forward(self, x):
         return x.unsqueeze(self.pos)
 
-
-class ImageNetClassificationPresetTrain:
+class ClassificationPresetTrain:
     def __init__(
         self,
         *,
@@ -29,7 +21,6 @@ class ImageNetClassificationPresetTrain:
         hflip_prob=0.5,
         auto_augment_policy=None,
         random_erase_prob=0.0,
-        color_jitter_factor=(0.1, 0.1, 0.1, 0.1),
     ):
         trans = [transforms.RandomResizedCrop(crop_size, interpolation=interpolation)]
         if hflip_prob > 0:
@@ -38,22 +29,14 @@ class ImageNetClassificationPresetTrain:
             if auto_augment_policy == "ra":
                 trans.append(autoaugment.RandAugment(interpolation=interpolation))
             elif auto_augment_policy == "ta_wide":
-                trans.append(
-                    autoaugment.TrivialAugmentWide(interpolation=interpolation)
-                )
+                trans.append(autoaugment.TrivialAugmentWide(interpolation=interpolation))
             elif auto_augment_policy == "augmix":
                 trans.append(autoaugment.AugMix(interpolation=interpolation))
             else:
                 aa_policy = autoaugment.AutoAugmentPolicy(auto_augment_policy)
-                trans.append(
-                    autoaugment.AutoAugment(
-                        policy=aa_policy, interpolation=interpolation
-                    )
-                )
+                trans.append(autoaugment.AutoAugment(policy=aa_policy, interpolation=interpolation))
         trans.extend(
             [
-                # ADDING ColorJitter
-                transforms.ColorJitter(*color_jitter_factor),
                 transforms.PILToTensor(),
                 transforms.ConvertImageDtype(torch.float),
                 transforms.Normalize(mean=mean, std=std),
@@ -64,14 +47,13 @@ class ImageNetClassificationPresetTrain:
 
         # For omnivore to make the image look like a video with C D H W layout
         trans.append(Unsqueeze(pos=1))
-
         self.transforms = transforms.Compose(trans)
 
     def __call__(self, img):
         return self.transforms(img)
 
 
-class ImageNetClassificationPresetEval:
+class ClassificationPresetEval:
     def __init__(
         self,
         *,

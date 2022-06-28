@@ -167,6 +167,7 @@ class DepthClassificationPresetTrain:
         interpolation=InterpolationMode.BILINEAR,
         hflip_prob=0.5,
         random_erase_prob=0.0,
+        color_jitter_factor=(0.1, 0.1, 0.1, 0.1),
     ):
         trans = [
             DepthNorm(max_depth=max_depth, clamp_max_before_scale=True),
@@ -179,7 +180,9 @@ class DepthClassificationPresetTrain:
         trans.extend(
             [
                 RandAugment3d(interpolation=interpolation, num_ops=1),
-                ColorJitter3d(brightness=0.4, contrast=0.4, saturation=0.4, hue=0.4),
+                # Use 0.1 instead of 0.4 for better convergence in lower epoch
+                #ColorJitter3d(brightness=0.1, contrast=0.1, saturation=0.1, hue=0.1),
+                ColorJitter3d(*color_jitter_factor),
             ]
         )
         if random_erase_prob > 0:

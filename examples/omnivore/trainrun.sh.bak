@@ -23,15 +23,6 @@ PYTHONPATH=:/data/home/yosuamichael/repos/torchmultimodal/examples/omnivore pyth
     --kinetics-data-path="/data/home/yosuamichael/datasets/mini_kinetics" \
     --sunrgbd-data-path="/data/home/yosuamichael/datasets/SUN_RGBD"
 
-# Just to create video cache
-env -u SLURM_PROCID python train.py \
-    --batch-size=128 --workers=1 \
-    --cache-video-dataset \
-    --kinetics-dataset-workers=30 \
-    --imagenet-data-path="/datasets01_ontap/imagenet_full_size/061417" \
-    --kinetics-data-path="/datasets01_ontap/kinetics/070618/400" \
-    --sunrgbd-data-path="/data/home/yosuamichael/datasets/SUN_RGBD" \
-
 # Using the full data!
 PYTHONPATH=:/data/home/yosuamichael/repos/torchmultimodal/examples/omnivore python \
     -u ~/script/run_with_submitit.py \
@@ -49,44 +40,15 @@ PYTHONPATH=:/data/home/yosuamichael/repos/torchmultimodal/examples/omnivore pyth
     --sunrgbd-data-path="/data/home/yosuamichael/datasets/SUN_RGBD" \
     --resume="/data/checkpoints/yosuamichael/experiments/22577/checkpoint.pth" \
 
-# Better param
-PYTHONPATH=:/data/home/yosuamichael/repos/torchmultimodal/examples/omnivore python \
-    -u ~/script/run_with_submitit.py \
-    --timeout 30000 --ngpus 8 --nodes 1 --partition train \
-    --batch-size=128 --workers=5 \
-    --cache-video-dataset \
-    --lr=0.5 --lr-warmup-epochs=5 --lr-warmup-method=linear \
-    --epochs=500 --weight-decay=0.05 \
-    --label-smoothing=0.1 --mixup-alpha=0.2 --cutmix-alpha=1.0 \
-    --train-crop-size=176 --val-resize-size=232 \
-    --extra-kinetics-dataloader-workers=5 \
-    --opt="sgd" --ra-sampler --ra-reps=4 \
-    --random-erase=0.1 \
-    --color-jitter-factor 0.0 0.0 0.0 0.0 \
-    --video-grad-accum-iter=32 \
-    --val-data-sampling-factor 1 1 1 \
-    --train-data-sampling-factor 1 1 10 \
-    --imagenet-data-path="/datasets01_ontap/imagenet_full_size/061417" \
-    --kinetics-data-path="/datasets01_ontap/kinetics/070618/400" \
-    --sunrgbd-data-path="/data/home/yosuamichael/datasets/SUN_RGBD" \
 
 # Only train on image to verify training script correctness!    
-env -u SLURM_PROCID python train.py \
-    --batch-size=128 --workers=6 \
-    --cache-video-dataset \
-    --extra-kinetics-dataloader-workers=6 \
+env -u SLURM_PROCID python train.py.bak \
+    --batch-size=128 --workers=8 \
     --lr=0.5 --lr-warmup-epochs=5 --lr-warmup-method=linear \
-    --epochs=200 --weight-decay=0.00002 \
+    --epochs=600 --weight-decay=0.00002 \
     --label-smoothing=0.1 --mixup-alpha=0.2 --cutmix-alpha=1.0 \
     --train-crop-size=176 --val-resize-size=232 \
-    --opt="sgd" --random-erase=0.1 \
-    --color-jitter-factor 0 0 0 0 \
+    --ra-sampler --ra-reps=4 \
     --imagenet-data-path="/datasets01_ontap/imagenet_full_size/061417" \
     --kinetics-data-path="/datasets01_ontap/kinetics/070618/400" \
     --sunrgbd-data-path="/data/home/yosuamichael/datasets/SUN_RGBD" \
-    --output-dir="temp_output_10" \
-    --ra-sampler --ra-reps=4 \
-    --video-grad-accum-iter=32 \
-    --val-data-sampling-factor 1 1 1 \
-    --train-data-sampling-factor 1 1 10 \
-
