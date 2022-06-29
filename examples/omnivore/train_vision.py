@@ -442,16 +442,37 @@ def evaluate(model, criterion, data_loader, device, print_freq=100, log_suffix="
         for (image, target), input_type in metric_logger.log_every(data_loader, print_freq, header):
         #for (image, target)  in metric_logger.log_every(data_loader, print_freq, header):
             #input_type = "image"
-            image = image.to(device, non_blocking=True)
-            target = target.to(device, non_blocking=True)
-            output = model(image, input_type)
-            loss = criterion(output, target)
 
+            # We do the evaluation in chunks to reduce memory usage for video
+            accum_iter = 1
+            if input_type == "video":
+                accum_iter = args.video_grad_accum_iter
+            b, c, t, h, w = image.shape
+
+            chunk_start = 0
+            chunk_size = (b + accum_iter - 1) // accum_iter
+            realized_accum_iter = (b + chunk_size - 1) // chunk_size
+            accum_loss = 0
+            all_chunk_outputs = []
+            for chunk_num in range(realized_accum_iter):
+                chunk_end = chunk_start + chunk_size
+                
+                chunk_image = image[chunk_start:chunk_end, ...].to(device, non_blocking=True)
+                chunk_target = target[chunk_start:chunk_end, ...].to(device, non_blocking=True)
+                chunk_output = model(chunk_image, input_type)
+                loss = criterion(chunk_output, chunk_target)
+
+                accum_loss += loss.item()
+                all_chunk_outputs.append(chunk_output)
+                chunk_start = chunk_end
+
+            output = torch.cat(all_chunk_outputs, dim=0)
+            target = target.to(device, non_blocking=True)
             acc1, acc5 = utils.accuracy(output, target, topk=(1, 5))
             # FIXME need to take into account that the datasets
             # could have been padded in distributed setup
             batch_size = image.shape[0]
-            metric_logger.update(loss=loss.item())
+            metric_logger.update(loss=accum_loss)
             metric_logger.meters[f"{input_type}_acc1"].update(acc1.item(), n=batch_size)
             metric_logger.meters[f"{input_type}_acc5"].update(acc5.item(), n=batch_size)
             num_processed_samples += batch_size
