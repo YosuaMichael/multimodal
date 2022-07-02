@@ -49,10 +49,10 @@ PYTHONPATH=:/data/home/yosuamichael/repos/torchmultimodal/examples/omnivore pyth
     --sunrgbd-data-path="/data/home/yosuamichael/datasets/SUN_RGBD" \
     --resume="/data/checkpoints/yosuamichael/experiments/22577/checkpoint.pth" \
 
-# Better param
+# Better param (work well with image + depth)
 PYTHONPATH=:/data/home/yosuamichael/repos/torchmultimodal/examples/omnivore python \
     -u ~/script/run_with_submitit.py \
-    --timeout 30000 --ngpus 8 --nodes 1 --partition train \
+    --timeout 30000 --ngpus 8 --nodes 2 --partition train \
     --batch-size=128 --workers=5 \
     --cache-video-dataset \
     --lr=0.5 --lr-warmup-epochs=5 --lr-warmup-method=linear \
@@ -70,23 +70,61 @@ PYTHONPATH=:/data/home/yosuamichael/repos/torchmultimodal/examples/omnivore pyth
     --kinetics-data-path="/datasets01_ontap/kinetics/070618/400" \
     --sunrgbd-data-path="/data/home/yosuamichael/datasets/SUN_RGBD" \
 
+# Exp param (try to be as similar as the paper)
+PYTHONPATH=:/data/home/yosuamichael/repos/torchmultimodal/examples/omnivore python \
+    -u ~/script/run_with_submitit.py \
+    --timeout 30000 --ngpus 8 --nodes 2 --partition train \
+    --batch-size=128 --workers=5 --extra-kinetics-dataloader-workers=5 \
+    --cache-video-dataset --num-epoch-per-eval=5\
+    --lr=0.002 --lr-warmup-epochs=5 --lr-warmup-method=linear \
+    --epochs=500 --weight-decay=0.05 --video-grad-accum-iter=32 \
+    --label-smoothing=0.1 --mixup-alpha=0.2 --cutmix-alpha=1.0 \
+    --train-crop-size=176 --val-resize-size=232 \
+    --opt="adamw" --random-erase=0.1 \
+    --color-jitter-factor 0.1 0.1 0.1 0.1 \
+    --val-data-sampling-factor 1 1 1 \
+    --train-data-sampling-factor 1 1 10 \
+    --imagenet-data-path="/datasets01_ontap/imagenet_full_size/061417" \
+    --kinetics-data-path="/datasets01_ontap/kinetics/070618/400" \
+    --sunrgbd-data-path="/data/home/yosuamichael/datasets/SUN_RGBD" \
+    --resume="/data/home/yosuamichael/temp/model_21.pth" \
+
+# Exact same param as paper
+PYTHONPATH=:/data/home/yosuamichael/repos/torchmultimodal/examples/omnivore python \
+    -u ~/script/run_with_submitit.py \
+    --timeout 30000 --ngpus 8 --nodes 1 --partition train \
+    --batch-size=128 --workers=5 --extra-kinetics-dataloader-workers=5 \
+    --cache-video-dataset --num-epoch-per-eval=10\
+    --lr=0.002 --lr-warmup-epochs=5 --lr-warmup-method=linear \
+    --epochs=500 --weight-decay=0.05 --video-grad-accum-iter=32 \
+    --label-smoothing=0.1 --mixup-alpha=0.2 --cutmix-alpha=1.0 \
+    --train-crop-size=224 --val-resize-size=224 \
+    --opt="adamw" --random-erase=0.25 \
+    --color-jitter-factor 0.4 0.4 0.4 0.4 \
+    --val-data-sampling-factor 1 1 1 \
+    --train-data-sampling-factor 1 1 10 \
+    --imagenet-data-path="/datasets01_ontap/imagenet_full_size/061417" \
+    --kinetics-data-path="/datasets01_ontap/kinetics/070618/400" \
+    --sunrgbd-data-path="/data/home/yosuamichael/datasets/SUN_RGBD" \
+
+
 # Only train on image to verify training script correctness!    
 env -u SLURM_PROCID python train.py \
     --batch-size=128 --workers=6 \
     --cache-video-dataset \
-    --extra-kinetics-dataloader-workers=6 \
-    --lr=0.5 --lr-warmup-epochs=5 --lr-warmup-method=linear \
-    --epochs=200 --weight-decay=0.00002 \
+    --extra-kinetics-dataloader-workers=0 \
+    --lr=0.002 --lr-warmup-epochs=5 --lr-warmup-method=linear \
+    --epochs=200 --weight-decay=0.05 \
     --label-smoothing=0.1 --mixup-alpha=0.2 --cutmix-alpha=1.0 \
     --train-crop-size=176 --val-resize-size=232 \
-    --opt="sgd" --random-erase=0.1 \
-    --color-jitter-factor 0 0 0 0 \
+    --opt="adamw" --random-erase=0.1 \
+    --color-jitter-factor 0.1 0.1 0.1 0.1 \
     --imagenet-data-path="/datasets01_ontap/imagenet_full_size/061417" \
     --kinetics-data-path="/datasets01_ontap/kinetics/070618/400" \
     --sunrgbd-data-path="/data/home/yosuamichael/datasets/SUN_RGBD" \
     --output-dir="temp_output_10" \
-    --ra-sampler --ra-reps=4 \
     --video-grad-accum-iter=32 \
-    --val-data-sampling-factor 1 1 1 \
-    --train-data-sampling-factor 1 1 10 \
+    --val-data-sampling-factor 1 0 1 \
+    --train-data-sampling-factor 1 0 10 \
+    --ra-sampler --ra-reps=4 \
 

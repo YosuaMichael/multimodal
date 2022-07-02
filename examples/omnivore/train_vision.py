@@ -430,7 +430,7 @@ def train_one_epoch(model, criterion, optimizer, data_loader, device, epoch, arg
         metric_logger.meters["img/s"].update(batch_size / (time.time() - start_time))
 
 
-def evaluate(model, criterion, data_loader, device, print_freq=100, log_suffix=""):
+def evaluate(model, criterion, data_loader, device, args, print_freq=100, log_suffix=""):
     model.eval()
     metric_logger = utils.MetricLogger(delimiter="  ")
     header = f"Test: {log_suffix}"
@@ -644,19 +644,23 @@ def main(args):
         torch.backends.cudnn.benchmark = False
         torch.backends.cudnn.deterministic = True
         if model_ema:
-            evaluate(model_ema, criterion, data_loader_test, device=device, log_suffix="EMA")
+            evaluate(model_ema, criterion, data_loader_test, device=device, args=args, log_suffix="EMA")
         else:
-            evaluate(model, criterion, data_loader_test, device=device)
+            evaluate(model, criterion, data_loader_test, device=device, args=args)
         return
+
+    # TODO: Delete this later! (only for testing)
+    evaluate(model, criterion, data_loader_test, device=device, args=args)
 
     print("Start training")
     start_time = time.time()
     for epoch in range(args.start_epoch, args.epochs):
         train_one_epoch(model, criterion, optimizer, data_loader, device, epoch, args, model_ema, scaler)
         lr_scheduler.step()
-        evaluate(model, criterion, data_loader_test, device=device)
+        if epoch % args.num_epoch_per_eval == args.num_epoch_per_eval - 1:
+            evaluate(model, criterion, data_loader_test, device=device, args=args)
         if model_ema:
-            evaluate(model_ema, criterion, data_loader_test, device=device, log_suffix="EMA")
+            evaluate(model_ema, criterion, data_loader_test, device=device, args=args, log_suffix="EMA")
         if args.output_dir:
             checkpoint = {
                 "model": model_without_ddp.state_dict(),
