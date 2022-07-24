@@ -76,7 +76,7 @@ def train_one_epoch(
     metric_logger.add_meter("lr", utils.SmoothedValue(window_size=1, fmt="{value}"))
     metric_logger.add_meter("img/s", utils.SmoothedValue(window_size=10, fmt="{value}"))
 
-    data_loader.init_indices(epoch=epoch, shuffle=True)
+    data_loader.set_epoch(epoch, is_distributed=args.distributed)
 
     header = f"Epoch: [{epoch}]"
     for i, (batch_data, input_type) in enumerate(
@@ -171,7 +171,6 @@ def evaluate(
     metric_logger = utils.MetricLogger(delimiter="  ")
     header = f"Test: {log_suffix}"
 
-    data_loader.init_indices(epoch=0, shuffle=False)
     for i, modality in enumerate(args.modalities):
         if modality == "video":
             # We aggregate predictions of all clips per video to get video-level accuracy

@@ -33,8 +33,9 @@ class OmnivoreSunRgbdDatasets(VisionDataset):
         self._meta_dir = Path(self.root) / "SUNRGBDtoolbox"
 
         if not self._check_exists():
-            print(f"data_dir: {self._data_dir}\nmeta_dir: {self._meta_dir}")
-            raise RuntimeError("Dataset not found.")
+            raise RuntimeError(
+                f"data_dir: {self._data_dir} or meta_dir: {self._meta_dir} not found"
+            )
 
         # Get the param from https://github.com/facebookresearch/omnivore/issues/12
         self.sensor_to_params = {
@@ -157,62 +158,49 @@ class OmnivoreSunRgbdDatasets(VisionDataset):
         return x_rgbd, scene_idx
 
 
-class ConcatIterable:
-    def __init__(self, iterables, output_keys, repeat_factors, seed=42):
-        self.iterables = iterables
-        self.output_keys = output_keys
-        self.repeat_factors = repeat_factors
-        self.seed = seed
-        self.num_iterables = len(self.iterables)
-        assert self.num_iterables == len(output_keys)
-        assert self.num_iterables == len(repeat_factors)
+class ConcatDataLoaderIterator:
+    def __init__(self, _obj):
+        # Copy necessary data from _obj
+        self.data_loaders = _obj.data_loaders
+        self.output_keys = _obj.output_keys
+        self.max_total_steps = _obj.max_total_steps
+        self.epoch = _obj.epoch
 
-        # The iterator len is adjusted with repeat_factors
-        self.iterator_lens = [
-            int(repeat_factors[i] * len(itb)) for i, itb in enumerate(self.iterables)
-        ]
-        self.max_total_steps = sum(self.iterator_lens)
-        self.indices = None
-        self.iterators = None
-
-        # self.step_counter == None indicate that self.indices are not yet initialized
-        self.step_counter = None
-
-    def init_indices(self, epoch=0, shuffle=False):
-        # We should initiate indices for each epoch, especially if we want to shuffle
+        # Construct iterators
         self.step_counter = 0
 
-        self.iterators = [iter(dl) for dl in self.iterables]
+        self.iterators = [iter(dl) for dl in self.data_loaders]
         self.indices = torch.cat(
             [
-                torch.ones(self.iterator_lens[i], dtype=torch.int32) * i
-                for i in range(self.num_iterables)
+                torch.ones(_obj.iterator_lengths[i], dtype=torch.int32) * i
+                for i in range(_obj.num_data_loaders)
             ]
         )
         assert self.max_total_steps == len(self.indices)
 
-        if shuffle:
+        if _obj.shuffle:
             g = torch.Generator()
-            g.manual_seed(self.seed + epoch)
+            if self.epoch is not None:
+                # Have deterministic behaviour when epoch is set
+                g.manual_seed(_obj.seed + self.epoch)
             shuffle_indices = torch.randperm(len(self.indices), generator=g)
             self.indices = self.indices[shuffle_indices]
 
+    def __iter__(self):
+        return self
+
     def __next__(self):
-        if self.step_counter is None:
-            # Initiate the indices without shuffle as default!
-            self.init_indices()
         if self.step_counter >= self.max_total_steps:
             raise StopIteration
 
         idx = self.indices[self.step_counter]
         output_key = self.output_keys[idx]
-        # print(idx)
         try:
             batch = next(self.iterators[idx])
         except StopIteration:
             # We cycle over the data_loader to the beginning. This can happen when repeat_factor > 1
             # Take note that in this case we always use same shuffling from same data_loader in an epoch
-            self.iterators[idx] = iter(self.iterables[idx])
+            self.iterators[idx] = iter(self.data_loaders[idx])
             batch = next(self.iterators[idx])
 
         self.step_counter += 1
@@ -222,5 +210,37 @@ class ConcatIterable:
     def __len__(self):
         return self.max_total_steps
 
+
+class ConcatDataLoader:
+    def __init__(
+        self, data_loaders, output_keys, repeat_factors, shuffle=False, seed=42
+    ):
+        self.data_loaders = data_loaders
+        self.output_keys = output_keys
+        self.repeat_factors = repeat_factors
+        self.shuffle = shuffle
+        self.seed = seed
+        self.num_data_loaders = len(self.data_loaders)
+        assert self.num_data_loaders == len(output_keys)
+        assert self.num_data_loaders == len(repeat_factors)
+
+        # The iterator len is adjusted with repeat_factors
+        self.iterator_lengths = [
+            int(repeat_factors[i] * len(itb)) for i, itb in enumerate(self.data_loaders)
+        ]
+        self.max_total_steps = sum(self.iterator_lengths)
+        self.epoch = None
+
+    def __len__(self):
+        return self.max_total_steps
+
     def __iter__(self):
-        return self
+        return ConcatDataLoaderIterator(self)
+
+    def set_epoch(self, epoch, is_distributed=False):
+        # Setting epoch will result in reproducible shuffling
+        self.epoch = epoch
+        if is_distributed:
+            # In distributed mode, we want to call set_epoch for the samplers
+            for data_loader in self.data_loaders:
+                data_loader.sampler.set_epoch(epoch)

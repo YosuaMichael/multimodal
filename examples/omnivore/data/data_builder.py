@@ -121,7 +121,7 @@ def get_kinetics_dataset(
         dataset.transform = transform
     else:
         if args.distributed:
-            print(
+            logger.info(
                 "It is recommended to pre-compute the dataset cache on a single-gpu first, it will be faster!"
             )
         logger.info("Building kinetics dataset")
@@ -138,14 +138,14 @@ def get_kinetics_dataset(
             num_workers=args.kinetics_dataset_workers,
         )
         if args.cache_video_dataset:
-            print(f"Saving {split} dataset to {cache_path}")
+            logger.info(f"Saving {split} dataset to {cache_path}")
             utils.mkdir(os.path.dirname(cache_path))
             utils.save_on_master((dataset, data_dir), cache_path)
     return dataset
 
 
 def get_imagenet_data_loader(mode, num_workers, args):
-    logger.info("Start getting {mode} imagenet data_loader")
+    logger.info(f"Start getting {mode} imagenet data_loader")
     # Get imagenet data
     imagenet_path = args.imagenet_data_path
 
@@ -244,10 +244,17 @@ def get_sunrgbd_data_loader(mode, num_workers, args):
 def get_omnivore_data_loader(mode, args):
     modalities = args.modalities
     data_loader_list = []
+    data_loader_builder_map = {
+        "image": get_imagenet_data_loader,
+        "video": get_kinetics_data_loader,
+        "rgbd": get_sunrgbd_data_loader,
+    }
     if mode == "train":
         data_sampling_factor = args.train_data_sampling_factor
+        shuffle = True
     elif mode == "val":
         data_sampling_factor = args.val_data_sampling_factor
+        shuffle = False
 
     for i, modality in enumerate(modalities):
         # Determine the number of workers
@@ -257,22 +264,18 @@ def get_omnivore_data_loader(mode, args):
             num_workers += args.extra_video_dataloader_workers
         if mode == "val":
             # Adjust num val workers with args.val_num_worker_ratio
-            num_workers = int(num_workers * args.val_num_worker_ratio)
-        # Reduce worker to 0 if sampling factor is 0
+            num_workers = max(int(num_workers * args.val_num_worker_ratio), 1)
+        # Sampling factor 0 means the modality produce no data, hence no need for worker
         if data_sampling_factor[i] == 0:
             num_workers = 0
-
-        if modality == "image":
-            data_loader = get_imagenet_data_loader(mode, num_workers, args)
-        elif modality == "video":
-            data_loader = get_kinetics_data_loader(mode, num_workers, args)
-        elif modality == "rgbd":
-            data_loader = get_sunrgbd_data_loader(mode, num_workers, args)
+        # Build data_loader
+        data_loader = data_loader_builder_map[modality](mode, num_workers, args)
         data_loader_list.append(data_loader)
 
-    data_loader = datasets.ConcatIterable(
+    omnivore_data_loader = datasets.ConcatDataLoader(
         data_loader_list,
         modalities,
         data_sampling_factor,
+        shuffle=shuffle,
     )
-    return data_loader
+    return omnivore_data_loader
