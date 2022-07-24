@@ -9,6 +9,7 @@
 import datetime
 import os
 import time
+import logging
 
 import examples.omnivore.data.data_builder as data_builder
 import examples.omnivore.utils as utils
@@ -17,6 +18,9 @@ import torch
 import torch.utils.data
 import torchmultimodal.models.omnivore as omnivore
 from torch import nn
+
+
+logger = logging.getLogger(__name__)
 
 
 def _chunk_forward_backward(
@@ -251,10 +255,10 @@ def evaluate(
                     agg_targets, op=torch.distributed.ReduceOp.MAX
                 )
                 agg_acc1, agg_acc5 = utils.accuracy(agg_preds, agg_targets, topk=(1, 5))
-                print(f"{header} Clip Acc@1 {acc1:.3f} Clip Acc@5 {acc5:.3f}")
-                print(f"{header} Video Acc@1 {agg_acc1:.3f} Video Acc@5 {agg_acc5:.3f}")
+                logger.info(f"{header} Clip Acc@1 {acc1:.3f} Clip Acc@5 {acc5:.3f}")
+                logger.info(f"{header} Video Acc@1 {agg_acc1:.3f} Video Acc@5 {agg_acc5:.3f}")
             else:
-                print(
+                logger.info(
                     f"{header} {modality} Acc@1 {acc1:.3f} {modality} Acc@5 {acc5:.3f}"
                 )
         except Exception:
@@ -266,7 +270,7 @@ def main(args):
         utils.mkdir(args.output_dir)
 
     utils.init_distributed_mode(args)
-    print(args)
+    logger.info(args)
 
     device = torch.device(args.device)
 
@@ -276,9 +280,7 @@ def main(args):
     else:
         torch.backends.cudnn.benchmark = True
 
-    train_data_loader, val_data_loader = data_builder.get_omnivore_data_loader(args)
-
-    print(f"Creating model: {args.model}")
+    logger.info(f"Creating model: {args.model}")
     model = getattr(omnivore, args.model)()
     model.to(device)
 
@@ -399,6 +401,7 @@ def main(args):
         if scaler:
             scaler.load_state_dict(checkpoint["scaler"])
 
+    val_data_loader = data_builder.get_omnivore_data_loader(mode="val", args)
     if args.test_only:
         # We disable the cudnn benchmarking because it can noticeably affect the accuracy
         torch.backends.cudnn.benchmark = False
@@ -416,7 +419,8 @@ def main(args):
             evaluate(model, criterion, val_data_loader, device=device, args=args)
         return
 
-    print("Start training")
+    logger.info("Start training")
+    train_data_loader = data_builder.get_omnivore_data_loader(mode="train", args)
     start_time = time.time()
     for epoch in range(args.start_epoch, args.epochs):
         train_one_epoch(
@@ -463,7 +467,7 @@ def main(args):
 
     total_time = time.time() - start_time
     total_time_str = str(datetime.timedelta(seconds=int(total_time)))
-    print(f"Training time {total_time_str}")
+    logger.info(f"Training time {total_time_str}")
 
 
 def get_args_parser(add_help=True):
@@ -504,7 +508,7 @@ def get_args_parser(add_help=True):
         default=16,
         type=int,
         metavar="N",
-        help="number of data loading workers (default: 16)",
+        help="number of training data loading workers (default: 16)",
     )
     parser.add_argument("--opt", default="sgd", type=str, help="optimizer")
     parser.add_argument("--lr", default=0.1, type=float, help="initial learning rate")
@@ -725,13 +729,13 @@ def get_args_parser(add_help=True):
         "--kinetics-dataset-workers",
         default=4,
         type=int,
-        help="number of kinetics dataset reader workers (default=4)",
+        help="number of worker to build kinetics dataset (default=4)",
     )
     parser.add_argument(
-        "--extra-kinetics-dataloader-workers",
+        "--extra-video-dataloader-workers",
         default=8,
         type=int,
-        help="number of kinetics data loader workers (default=8)",
+        help="number of additional video data loader workers (default=8)",
     )
     parser.add_argument(
         "--num-epoch-per-eval",
@@ -782,6 +786,12 @@ def get_args_parser(add_help=True):
         "--loader-drop-last",
         action="store_true",
         help="Drop last parameter in DataLoader",
+    )
+    parser.add_argument(
+        "--val-worker-ratio",
+        default=0.5,
+        type=float,
+        help="Ratio between evaluation and training data loader workers number",
     )
     return parser
 
