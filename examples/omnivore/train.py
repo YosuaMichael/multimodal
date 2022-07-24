@@ -7,9 +7,9 @@
 # Based on https://github.com/pytorch/vision/blob/main/references/classification/train.py
 
 import datetime
+import logging
 import os
 import time
-import logging
 
 import examples.omnivore.data.data_builder as data_builder
 import examples.omnivore.utils as utils
@@ -18,9 +18,6 @@ import torch
 import torch.utils.data
 import torchmultimodal.models.omnivore as omnivore
 from torch import nn
-
-
-logger = logging.getLogger(__name__)
 
 
 def _chunk_forward_backward(
@@ -256,7 +253,9 @@ def evaluate(
                 )
                 agg_acc1, agg_acc5 = utils.accuracy(agg_preds, agg_targets, topk=(1, 5))
                 logger.info(f"{header} Clip Acc@1 {acc1:.3f} Clip Acc@5 {acc5:.3f}")
-                logger.info(f"{header} Video Acc@1 {agg_acc1:.3f} Video Acc@5 {agg_acc5:.3f}")
+                logger.info(
+                    f"{header} Video Acc@1 {agg_acc1:.3f} Video Acc@5 {agg_acc5:.3f}"
+                )
             else:
                 logger.info(
                     f"{header} {modality} Acc@1 {acc1:.3f} {modality} Acc@5 {acc5:.3f}"
@@ -266,6 +265,13 @@ def evaluate(
 
 
 def main(args):
+    log_numeric_level = getattr(logging, args.log_level.upper(), None)
+    if not isinstance(log_numeric_level, int):
+        raise ValueError(f"Invalid log level: {log_leve}")
+    log_format = "[%(asctime)s] %(levelname)s - %(message)s"
+    logging.basicConfig(format=log_format, level=log_numeric_level)
+    logger = logging.getLogger(__name__)
+
     if args.output_dir:
         utils.mkdir(args.output_dir)
 
@@ -401,7 +407,7 @@ def main(args):
         if scaler:
             scaler.load_state_dict(checkpoint["scaler"])
 
-    val_data_loader = data_builder.get_omnivore_data_loader(mode="val", args)
+    val_data_loader = data_builder.get_omnivore_data_loader(mode="val", args=args)
     if args.test_only:
         # We disable the cudnn benchmarking because it can noticeably affect the accuracy
         torch.backends.cudnn.benchmark = False
@@ -420,7 +426,7 @@ def main(args):
         return
 
     logger.info("Start training")
-    train_data_loader = data_builder.get_omnivore_data_loader(mode="train", args)
+    train_data_loader = data_builder.get_omnivore_data_loader(mode="train", args=args)
     start_time = time.time()
     for epoch in range(args.start_epoch, args.epochs):
         train_one_epoch(
@@ -788,11 +794,12 @@ def get_args_parser(add_help=True):
         help="Drop last parameter in DataLoader",
     )
     parser.add_argument(
-        "--val-worker-ratio",
+        "--val-num-worker-ratio",
         default=0.5,
         type=float,
         help="Ratio between evaluation and training data loader workers number",
     )
+    parser.add_argument("--log-level", default="INFO", type=str, help="Log level")
     return parser
 
 

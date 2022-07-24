@@ -66,7 +66,7 @@ def get_image_sampler(dataset, mode, args):
 
 def construct_data_loader(dataset, sampler, num_workers, args, drop_last=False):
     collate_fn = None
-    num_classes = len(train_dataset.classes)
+    num_classes = len(dataset.classes)
     mixup_transforms = []
     if args.mixup_alpha > 0.0:
         mixup_transforms.append(
