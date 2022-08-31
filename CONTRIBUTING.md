@@ -63,6 +63,7 @@ Ideally, flake and ufmt should be run via pre-commit hooks.
 But if for some reason you want to run them separately follow this:
 
 ```
+pip install -r dev-requirements.txt
 flake8 (examples|test|torchmultimodal)
 ufmt format (examples|test|torchmultimodal)
 ```
@@ -70,7 +71,6 @@ ufmt format (examples|test|torchmultimodal)
 Alternatively, you can run on only those files you have modified, e.g.
 
 ```
-pip install flake8==4.0.1 ufmt==1.3.0 black==21.4b2 usort==0.6.4
 flake8 `git diff main --name-only`
 ufmt format `git diff main --name-only`
 ```
@@ -89,8 +89,12 @@ mypy `git diff main --name-only`
 
 
 ### Unit Tests
-Please add unit tests for adding a new feature or a bug-fix. To run a specific test:
+Please add unit tests for adding a new feature or a bug-fix.
 
+*Note: we are migrating from `unitest` to [`pytest`](https://docs.pytest.org/en/7.1.x/).
+Please write your tests in pytest to help us with the transition.*
+
+To run a specific test:
 ```
 pytest test/<test-module.py> -vv -k <test_myfunc>
 # e.g. pytest test/models/test_cnn_lstm.py -vv -k TestCNNLSTMModule
